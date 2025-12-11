@@ -1,0 +1,59 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+
+         {
+            "name": "train_czykt_conten&analysis embeddings",
+            "type": "python",
+            "request": "launch",
+            "module": "examples.wandb_newkt_train",
+            "justMyCode": true,
+            "args": [
+             "--use_contrastive", "False",
+
+            ],
+            "env": {
+            "CUDA_VISIBLE_DEVICES": "2"
+            }
+         },
+         {
+            "name": "train_czykt_conten&analysis embeddings and contrative loss",
+            "type": "python",
+            "request": "launch",
+            "module": "scripts_training2testing.examples.wandb_newkt_train",
+            "justMyCode": true,
+            "args": [
+           
+
+            ],
+            "env": {
+            "CUDA_VISIBLE_DEVICES": "3"
+            }
+         },
+         {
+            "name": "dkt_wandb_predict",
+            "type": "python",
+            "request": "launch",
+            "module": "scripts_training2testing.examples.wandb_predict",
+            "justMyCode": true,
+            "args": [
+           
+
+            ],
+            "env": {
+            "CUDA_VISIBLE_DEVICES": "2"
+            }
+         },
+    ]
+}
