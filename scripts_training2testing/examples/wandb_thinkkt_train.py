@@ -52,7 +52,7 @@ parser.add_argument("--num_heads", type=int, default=8,
                    help="注意力头数")
 parser.add_argument("--num_lstm_layers", type=int, default=2,
                    help="LSTM层数（当seq_model_type=lstm时使用）")
-parser.add_argument("--mllm_name", type=str, default="/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct",
+parser.add_argument("--mllm_name", type=str, default="/home3/zhiyu/code-5/CRKT/five-thinkkt/hf_models/Qwen/Qwen2-VL-3B-Instruct",
                    help="多模态大语言模型路径（本地路径或HuggingFace模型名）")
 parser.add_argument("--use_cot", type=int, default=0,
                    help="是否使用CoT (0/1，当前版本为0)")

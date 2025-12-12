@@ -209,3 +209,4 @@ __marimo__/
 data/
 hf_models/
 scripts_training2testing/examples/saved_model/
+.vscode/
