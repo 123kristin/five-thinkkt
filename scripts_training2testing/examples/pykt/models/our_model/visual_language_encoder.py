@@ -3,6 +3,15 @@
 用于提取题目图片的视觉特征和知识点分布
 """
 import os
+import sys
+import warnings
+import logging
+
+# 抑制transformers的警告信息
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+warnings.filterwarnings('ignore', category=UserWarning)
+logging.getLogger('transformers').setLevel(logging.ERROR)
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,7 +19,6 @@ from typing import Dict, Optional, List, Tuple
 import pickle
 import json
 from functools import lru_cache
-import sys
 
 # 直接导入 transformers 库来使用 Qwen2.5-VL 模型
 try:
@@ -137,7 +145,8 @@ class VisualLanguageEncoder(nn.Module):
             )
             self.vision_processor_tokenizer = AutoProcessor.from_pretrained(
                 self.model_path,
-                trust_remote_code=True
+                trust_remote_code=True,
+                use_fast=False  # 避免警告，使用slow processor
             )
             self.vision_model.eval()  # 设置为评估模式
             self._vision_model_loaded = True
@@ -482,6 +491,63 @@ def build_img_path_dict(dataset_name: str, data_config: dict) -> Dict[int, str]:
             if filename.endswith('.jpg'):
                 qid = int(filename.replace('.jpg', ''))
                 img_path_dict[qid] = os.path.join(q_imgs_dir, filename)
+    
+    elif "NIPS_task34" in dataset_name:
+        # NIPS_task34的图片路径：图片直接存放在images文件夹下
+        # 注意：NIPS_task34数据集本身就有题目图片，不需要预处理生成
+        dpath = data_config.get("dpath", "")
+        possible_paths = [
+            os.path.join(dpath, "images"),
+            os.path.join(dpath, "../images"),
+            "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/NIPS_task34/images",
+            "/home3/zhiyu/code-5/CRKT/data/NIPS_task34/images"
+        ]
+        
+        images_dir = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                images_dir = path
+                break
+        
+        if images_dir is None:
+            print(f"[build_img_path_dict] 警告: 无法找到NIPS_task34的images目录，尝试过的路径: {possible_paths}")
+            return img_path_dict
+        
+        # 尝试获取qid映射（如果存在）
+        qid_mapping = None
+        try:
+            # 尝试导入映射函数
+            import sys
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../prepare_q_img_for_kt_dataset'))
+            from my_utils import get_qid_ori2new
+            qid_mapping = get_qid_ori2new(data_config)
+            print(f"[build_img_path_dict] NIPS_task34: 已加载qid映射，映射数量: {len(qid_mapping) if qid_mapping else 0}")
+        except Exception as e:
+            print(f"[build_img_path_dict] NIPS_task34: 无法加载qid映射，将使用原始qid: {e}")
+            qid_mapping = None
+        
+        # 扫描所有图片文件（支持多种格式）
+        for filename in os.listdir(images_dir):
+            # 支持.jpg, .png等格式
+            if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                # 提取qid（文件名去掉扩展名）
+                qid_str = os.path.splitext(filename)[0]
+                try:
+                    qid_ori = int(qid_str)
+                    # 如果存在映射，使用映射后的qid；否则使用原始qid
+                    qid = qid_mapping.get(qid_str, qid_ori) if qid_mapping else qid_ori
+                    # 如果映射是字符串，转换为int
+                    if isinstance(qid, str):
+                        try:
+                            qid = int(qid)
+                        except ValueError:
+                            qid = qid_ori
+                    
+                    img_path = os.path.join(images_dir, filename)
+                    img_path_dict[qid] = img_path
+                except ValueError:
+                    print(f"[build_img_path_dict] 警告: 无法解析文件名的qid: {filename}")
+                    continue
     
     print(f"[build_img_path_dict] 已构建 {len(img_path_dict)} 个问题ID到图片路径的映射")
     return img_path_dict

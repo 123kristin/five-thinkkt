@@ -50,8 +50,9 @@ def build_cot_prompt(
     # 3. 当前题目信息
     prompt_parts.append("## 当前题目：")
     prompt_parts.append(f"问题ID: {current_qid}")
-    if current_kcs:
-        kc_names = [kc_vocab.get(kc_id, f"知识点{kc_id}") for kc_id in current_kcs if kc_id in kc_vocab]
+    if current_kcs and isinstance(current_kcs, list):
+        kc_names = [kc_vocab.get(kc_id, f"知识点{kc_id}") if isinstance(kc_id, int) else str(kc_id) 
+                   for kc_id in current_kcs]
         if kc_names:
             prompt_parts.append(f"涉及知识点: {', '.join(kc_names)}")
     prompt_parts.append("")

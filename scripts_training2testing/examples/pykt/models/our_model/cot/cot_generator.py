@@ -3,13 +3,22 @@
 使用 MLLM 生成思维链推理
 """
 import os
+import sys
+import warnings
+import logging
+
+# 抑制transformers和sentence-transformers的警告信息
+os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+warnings.filterwarnings('ignore', category=UserWarning)
+logging.getLogger('transformers').setLevel(logging.ERROR)
+logging.getLogger('sentence_transformers').setLevel(logging.ERROR)
+
 import torch
 import torch.nn as nn
 from typing import Dict, Optional, List, Tuple
 import json
 import hashlib
 from functools import lru_cache
-import sys
 
 # 导入 transformers
 try:
@@ -46,7 +55,7 @@ class CoTGenerator(nn.Module):
     def __init__(
         self,
         mllm_name: str = "/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct",
-        text_encoder_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        text_encoder_name: str = "/home3/zhiyu/code-5/CRKT/five-thinkkt/hf_models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         d_cot: int = 384,
         cache_dir: Optional[str] = None,
         device: Optional[torch.device] = None,
@@ -88,7 +97,18 @@ class CoTGenerator(nn.Module):
         # CoT 缓存
         self.cache_dir = cache_dir if cache_dir else "cot_cache"
         self.cot_cache = {}
+        print(f"[CoTGenerator] 初始化缓存目录: {self.cache_dir}")
+        import sys
+        sys.stdout.flush()
+        
+        print(f"[CoTGenerator] 开始加载CoT缓存...")
+        sys.stdout.flush()
         self._load_cot_cache()
+        print(f"[CoTGenerator] 缓存加载完成，共 {len(self.cot_cache)} 条缓存")
+        sys.stdout.flush()
+        
+        print(f"[CoTGenerator] __init__ 完成，准备返回")
+        sys.stdout.flush()
     
     def _get_device(self):
         """获取设备"""
@@ -123,7 +143,8 @@ class CoTGenerator(nn.Module):
             )
             self.mllm_processor = AutoProcessor.from_pretrained(
                 self.mllm_name,
-                trust_remote_code=True
+                trust_remote_code=True,
+                use_fast=False  # 避免警告，使用slow processor
             )
             self.mllm_model.eval()
             self._mllm_loaded = True
@@ -144,11 +165,39 @@ class CoTGenerator(nn.Module):
         
         print(f"[CoTGenerator] 正在加载文本编码器: {self.text_encoder_name}")
         try:
+            print(f"[CoTGenerator] 开始初始化 SentenceTransformer...")
+            import sys
+            sys.stdout.flush()  # 确保输出立即显示
             self.text_encoder = SentenceTransformer(self.text_encoder_name, device=str(self.device))
+            print(f"[CoTGenerator] SentenceTransformer 模型对象创建完成")
+            sys.stdout.flush()
+            
+            # 注释掉验证步骤，延迟到首次使用时再验证，加快初始化速度
+            # print(f"[CoTGenerator] 正在验证文本编码器...")
+            # sys.stdout.flush()
+            # try:
+            #     test_embed = self.text_encoder.encode("test", convert_to_tensor=True)
+            #     print(f"[CoTGenerator] encode操作完成，开始获取嵌入维度...")
+            #     sys.stdout.flush()
+            #     embed_shape = test_embed.shape
+            #     print(f"[CoTGenerator] 文本编码器验证完成，测试嵌入维度: {embed_shape}")
+            #     sys.stdout.flush()
+            # except Exception as e:
+            #     print(f"[CoTGenerator] 警告: 验证文本编码器时出错: {e}")
+            #     import traceback
+            #     traceback.print_exc()
+            #     sys.stdout.flush()
+            
             self._text_encoder_loaded = True
-            print(f"[CoTGenerator] 文本编码器加载完成")
+            print(f"[CoTGenerator] 文本编码器加载完成，_text_encoder_loaded设置为True")
+            sys.stdout.flush()
+            print(f"[CoTGenerator] _load_text_encoder 方法即将返回")
+            sys.stdout.flush()
         except Exception as e:
             print(f"[CoTGenerator] 警告: 加载文本编码器失败: {e}，将使用简单编码")
+            import traceback
+            traceback.print_exc()
+            sys.stdout.flush()
             self.text_encoder = None
             self._text_encoder_loaded = True
     
@@ -159,24 +208,44 @@ class CoTGenerator(nn.Module):
     def _load_cot_cache(self):
         """加载 CoT 缓存"""
         if not self.use_cache:
+            print(f"[CoTGenerator] 缓存功能已禁用")
             return
         
         cache_path = self._get_cache_path()
+        print(f"[CoTGenerator] 检查缓存文件: {cache_path}")
+        import sys
+        sys.stdout.flush()
+        
         if os.path.exists(cache_path):
             try:
                 print(f"[CoTGenerator] 正在加载 CoT 缓存: {cache_path}")
+                sys.stdout.flush()
+                line_count = 0
                 with open(cache_path, 'r', encoding='utf-8') as f:
                     for line in f:
                         if line.strip():
-                            item = json.loads(line)
-                            cache_key = item.get('cache_key')
-                            if cache_key:
-                                self.cot_cache[cache_key] = item
+                            line_count += 1
+                            if line_count % 1000 == 0:
+                                print(f"[CoTGenerator] 已处理 {line_count} 行缓存...")
+                                sys.stdout.flush()
+                            try:
+                                item = json.loads(line)
+                                cache_key = item.get('cache_key')
+                                if cache_key:
+                                    self.cot_cache[cache_key] = item
+                            except json.JSONDecodeError as e:
+                                print(f"[CoTGenerator] 警告: 跳过无效的缓存行: {e}")
                 print(f"[CoTGenerator] 已加载 {len(self.cot_cache)} 个 CoT 缓存")
+                sys.stdout.flush()
             except Exception as e:
                 print(f"[CoTGenerator] 警告: 加载缓存失败 {e}")
+                import traceback
+                traceback.print_exc()
+                sys.stdout.flush()
                 self.cot_cache = {}
         else:
+            print(f"[CoTGenerator] 缓存文件不存在，将创建新缓存")
+            sys.stdout.flush()
             self.cot_cache = {}
     
     def _save_cot_cache(self):
@@ -239,10 +308,14 @@ class CoTGenerator(nn.Module):
             cot_text = cached_item.get('cot_text', '')
             cot_embed = torch.tensor(cached_item.get('cot_embed', []), device=self.device)
             if cot_text and cot_embed.numel() > 0:
+                # 从缓存读取，不输出信息（避免输出过多）
                 return cot_text, cot_embed
         
         # 加载模型
         if not self._mllm_loaded:
+            import sys
+            print(f"[CoTGenerator] 首次生成CoT，正在加载MLLM（qid={current_qid})...")
+            sys.stdout.flush()
             self._load_mllm()
         
         # 构建 prompt
@@ -292,7 +365,7 @@ class CoTGenerator(nn.Module):
                 processor_kwargs["videos"] = video_inputs
             
             inputs = self.mllm_processor(**processor_kwargs)
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            inputs = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in inputs.items()}
             
             # 生成
             with torch.no_grad():
@@ -301,20 +374,67 @@ class CoTGenerator(nn.Module):
                     max_new_tokens=128,
                     do_sample=False
                 )
-                generated_ids_trimmed = [
-                    out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-                ]
-                cot_text = self.mllm_processor.batch_decode(
-                    generated_ids_trimmed,
-                    skip_special_tokens=True,
-                    clean_up_tokenization_spaces=False
-                )[0]
+                
+                # 修复：inputs是字典，使用字典访问方式
+                input_ids = inputs.get('input_ids')
+                if input_ids is None:
+                    raise ValueError("无法找到input_ids，processor返回的格式可能不正确")
+                
+                # 处理生成结果 - 提取新生成的token
+                if isinstance(generated_ids, torch.Tensor):
+                    if input_ids.dim() == 2 and generated_ids.dim() == 2:
+                        # batch维度处理
+                        input_len = input_ids.shape[1]
+                        generated_ids_trimmed = generated_ids[:, input_len:]
+                    elif input_ids.dim() == 1:
+                        input_len = input_ids.shape[0]
+                        if generated_ids.dim() == 1:
+                            generated_ids_trimmed = generated_ids[input_len:].unsqueeze(0)
+                        else:
+                            generated_ids_trimmed = generated_ids[:, input_len:]
+                    else:
+                        generated_ids_trimmed = generated_ids
+                else:
+                    generated_ids_trimmed = generated_ids
+                
+                # 解码
+                if isinstance(generated_ids_trimmed, torch.Tensor):
+                    if generated_ids_trimmed.dim() == 1:
+                        generated_ids_trimmed = generated_ids_trimmed.unsqueeze(0)
+                    cot_text = self.mllm_processor.batch_decode(
+                        generated_ids_trimmed,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=False
+                    )
+                else:
+                    cot_text = self.mllm_processor.batch_decode(
+                        generated_ids_trimmed,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=False
+                    )
+                
+                if isinstance(cot_text, list) and len(cot_text) > 0:
+                    cot_text = cot_text[0]
+                elif not isinstance(cot_text, str):
+                    cot_text = str(cot_text)
             
             # 验证和清理 CoT
+            if not cot_text or not isinstance(cot_text, str):
+                cot_text = ""
             cot_text = cot_text.strip()
-            if not validate_cot(cot_text):
+            
+            if not cot_text or not validate_cot(cot_text):
                 print(f"[CoTGenerator] 警告: 生成的 CoT 不符合要求，使用默认文本")
-                cot_text = f"学生历史答题记录显示{'掌握' if sum(history_rs) > len(history_rs)/2 else '薄弱'}相关知识点。当前题目考察知识点：{', '.join([kc_vocab.get(kc, '未知') for kc in (current_kcs or [])])}。"
+                # 安全处理知识点列表
+                kc_text = ""
+                if current_kcs and isinstance(current_kcs, list):
+                    try:
+                        kc_names = [kc_vocab.get(kc, f"知识点{kc}") if isinstance(kc, int) else str(kc) 
+                                  for kc in current_kcs[:5]]  # 限制长度避免过长
+                        kc_text = f"当前题目考察知识点：{', '.join(kc_names)}。" if kc_names else ""
+                    except Exception:
+                        kc_text = ""
+                cot_text = f"学生历史答题记录显示{'掌握' if sum(history_rs) > len(history_rs)/2 else '薄弱'}相关知识点。{kc_text}"
             
             # 编码 CoT
             cot_embed = self.encode_cot(cot_text)
@@ -329,6 +449,12 @@ class CoTGenerator(nn.Module):
                     'history_rs': history_rs,
                     'current_qid': current_qid
                 }
+                # 每生成100个新的CoT时，保存一次缓存（避免丢失）
+                if len(self.cot_cache) % 100 == 0 and len(self.cot_cache) > 0:
+                    import sys
+                    print(f"\n[CoTGenerator] 缓存数量达到 {len(self.cot_cache)}，自动保存缓存...")
+                    sys.stdout.flush()
+                    self._save_cot_cache()
             
             return cot_text, cot_embed
             
@@ -349,8 +475,13 @@ class CoTGenerator(nn.Module):
         Returns:
             cot_embed: CoT 嵌入向量 (d_cot,)
         """
+        import sys
         if not self._text_encoder_loaded:
+            print(f"[CoTGenerator] encode_cot: 检测到文本编码器未加载，开始加载...")
+            sys.stdout.flush()
             self._load_text_encoder()
+            print(f"[CoTGenerator] encode_cot: 文本编码器加载完成，继续编码")
+            sys.stdout.flush()
         
         if self.text_encoder is not None:
             # 使用 sentence-transformers

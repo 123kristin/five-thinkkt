@@ -422,4 +422,8 @@ def train_model(model, train_loader, valid_loader, num_epochs, opt, ckpt_path, t
         if i - best_epoch >= 10:
             break
     
+    # 训练结束时保存特征缓存和CoT缓存
+    if hasattr(model, 'save_feature_cache'):
+        model.save_feature_cache()
+    
     return testauc, testacc, window_testauc, window_testacc, validauc, validacc, best_epoch

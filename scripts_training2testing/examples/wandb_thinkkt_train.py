@@ -25,7 +25,7 @@ parser.add_argument("--use_wandb", type=int, default=0,
                    help="是否使用wandb记录 (0/1)")
 parser.add_argument("--add_uuid", type=int, default=1,
                    help="是否添加UUID到保存路径 (0/1)")
-parser.add_argument("--save_dir", type=str, default="saved_model",
+parser.add_argument("--save_dir", type=str, default="saved_model/base",
                    help="模型保存目录")
 
 # model config
@@ -46,7 +46,7 @@ parser.add_argument("--dropout", type=float, default=0.1,
 parser.add_argument("--seq_model_type", type=str, default="transformer",
                    choices=["transformer", "lstm"],
                    help="序列模型类型: transformer 或 lstm")
-parser.add_argument("--num_transformer_layers", type=int, default=6,
+parser.add_argument("--num_transformer_layers", type=int, default=2,
                    help="Transformer层数")
 parser.add_argument("--num_heads", type=int, default=8,
                    help="注意力头数")

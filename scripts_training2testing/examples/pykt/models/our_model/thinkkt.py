@@ -101,15 +101,18 @@ class ThinkKT(nn.Module):
                 self.cot_generator = None
             else:
                 print(f"[ThinkKT] 正在初始化 CoT 生成器...")
+                import sys
+                sys.stdout.flush()
                 self.cot_generator = CoTGenerator(
                     mllm_name=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
-                    text_encoder_name=config.get('text_encoder_name', 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'),
+                    text_encoder_name=config.get('text_encoder_name', '/home3/zhiyu/code-5/CRKT/five-thinkkt/hf_models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'),
                     d_cot=self.d_cot,
                     cache_dir=config.get('cot_cache_dir', 'cot_cache'),
                     device=self.device,
                     use_cache=True
                 )
                 print(f"[ThinkKT] CoT 生成器初始化完成")
+                sys.stdout.flush()
         else:
             self.cot_generator = None
         
@@ -207,10 +210,20 @@ class ThinkKT(nn.Module):
         
         # 批量生成 CoT 嵌入
         cot_embeds = []
+        total_items = batch_size * seq_len
+        processed_items = 0
+        cached_count = 0
+        generated_count = 0
+        
+        print(f"[ThinkKT] 开始生成CoT嵌入: batch_size={batch_size}, seq_len={seq_len}, 总计 {total_items} 个")
+        import sys
+        sys.stdout.flush()
+        
         for b in range(batch_size):
             batch_cot_embeds = []
             for s in range(seq_len):
                 qid = int(qids_cpu[b, s])
+                processed_items += 1
                 
                 # 获取历史交互
                 history_qids = [int(qids_cpu[b, i]) for i in range(s)]
@@ -222,6 +235,9 @@ class ThinkKT(nn.Module):
                 else:
                     # 如果找不到路径，返回零向量
                     batch_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                    if processed_items % 10 == 0:
+                        print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count}", end='\r')
+                        sys.stdout.flush()
                     continue
                 
                 # 获取知识点信息
@@ -236,6 +252,10 @@ class ThinkKT(nn.Module):
                 
                 # 生成 CoT
                 try:
+                    # 检查是否在缓存中
+                    cache_key = self.cot_generator._get_cache_key(history_qids, history_rs, qid)
+                    from_cache = cache_key in self.cot_generator.cot_cache
+                    
                     cot_text, cot_embed = self.cot_generator.generate_cot(
                         history_qids=history_qids,
                         history_rs=history_rs,
@@ -245,12 +265,28 @@ class ThinkKT(nn.Module):
                         history_kcs=history_kcs,
                         current_kcs=current_kcs
                     )
+                    
+                    if from_cache:
+                        cached_count += 1
+                    else:
+                        generated_count += 1
+                    
                     batch_cot_embeds.append(cot_embed.to(device))
+                    
+                    # 每10个或每生成一个非缓存的CoT时输出进度
+                    if processed_items % 10 == 0 or not from_cache:
+                        print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count} | 当前qid={qid}", end='\r')
+                        sys.stdout.flush()
+                        
                 except Exception as e:
-                    print(f"[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}): {e}")
+                    print(f"\n[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}, batch={b}, seq={s}): {e}")
+                    sys.stdout.flush()
                     batch_cot_embeds.append(torch.zeros(self.d_cot, device=device))
             
             cot_embeds.append(torch.stack(batch_cot_embeds))
+        
+        print(f"\n[ThinkKT] CoT生成完成: 总计 {processed_items} 个，缓存: {cached_count}，新生成: {generated_count}")
+        sys.stdout.flush()
         
         # 堆叠为 (batch_size, seq_len, d_cot)
         r_embed = torch.stack(cot_embeds)
@@ -370,6 +406,10 @@ class ThinkKT(nn.Module):
         """保存特征缓存"""
         if self.visual_encoder is not None:
             self.visual_encoder.save_feature_cache()
+        
+        # 保存CoT缓存
+        if self.cot_generator is not None:
+            self.cot_generator._save_cot_cache()
     
     def state_dict(self, destination=None, prefix='', keep_vars=False):
         """

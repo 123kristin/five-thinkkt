@@ -6,7 +6,52 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
+import math
 from typing import Optional
+
+
+class CausalTransformerEncoder(nn.Module):
+    """
+    带因果掩码的Transformer编码器
+    确保位置i只能关注到位置j<=i，防止数据泄漏
+    """
+    
+    def __init__(self, d_model, nhead, dim_feedforward, dropout, num_layers, activation='gelu'):
+        super().__init__()
+        # 创建独立的层实例
+        self.layers = nn.ModuleList([
+            nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+                batch_first=True,
+                activation=activation
+            ) for _ in range(num_layers)
+        ])
+        self.num_layers = num_layers
+    
+    def forward(self, src, mask=None, src_key_padding_mask=None):
+        """
+        前向传播，自动添加因果掩码
+        
+        Args:
+            src: 输入序列 (batch, seq_len, d_model)
+            mask: 自定义注意力掩码（可选，会被因果掩码覆盖）
+            src_key_padding_mask: padding掩码
+        """
+        output = src
+        seq_len = src.size(1)
+        
+        # 创建因果掩码（上三角矩阵，True表示需要mask的位置）
+        # 位置i只能关注位置j<=i
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=src.device, dtype=torch.bool), diagonal=1)
+        
+        # 遍历每一层
+        for mod in self.layers:
+            output = mod(output, src_mask=causal_mask, src_key_padding_mask=src_key_padding_mask)
+        
+        return output
 
 
 class ThinkKTNet(nn.Module):
@@ -82,17 +127,14 @@ class ThinkKTNet(nn.Module):
             num_layers = config.get('num_transformer_layers', 6)
             num_heads = config.get('num_heads', 8)
             
-            encoder_layer = nn.TransformerEncoderLayer(
+            # 使用自定义的CausalTransformerEncoder以支持因果掩码
+            self.seq_model = CausalTransformerEncoder(
                 d_model=self.d_knowledge,
                 nhead=num_heads,
                 dim_feedforward=self.d_knowledge * 4,
                 dropout=self.dropout,
-                batch_first=True,
+                num_layers=num_layers,
                 activation='gelu'
-            )
-            self.seq_model = nn.TransformerEncoder(
-                encoder_layer,
-                num_layers=num_layers
             )
         elif self.seq_model_type == 'lstm':
             num_layers = config.get('num_lstm_layers', 2)
@@ -179,6 +221,8 @@ class ThinkKTNet(nn.Module):
             else:
                 src_key_padding_mask = None
             
+            # 使用因果掩码，确保位置i只能看到位置j<=i的信息
+            # 这是通过CausalTransformerEncoderLayer自动实现的
             h_t = self.seq_model(z, src_key_padding_mask=src_key_padding_mask)
         else:  # LSTM
             # LSTM处理变长序列
