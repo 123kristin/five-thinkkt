@@ -59,7 +59,8 @@ class CoTGenerator(nn.Module):
         d_cot: int = 384,
         cache_dir: Optional[str] = None,
         device: Optional[torch.device] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        dataset_name: Optional[str] = None
     ):
         """
         初始化 CoT 生成器
@@ -71,6 +72,7 @@ class CoTGenerator(nn.Module):
             cache_dir: 缓存目录
             device: 设备
             use_cache: 是否使用缓存
+            dataset_name: 数据集名称（用于语言检测和提示词优化）
         """
         super(CoTGenerator, self).__init__()
         
@@ -84,6 +86,7 @@ class CoTGenerator(nn.Module):
         self.text_encoder_name = text_encoder_name
         self.d_cot = d_cot
         self.use_cache = use_cache
+        self.dataset_name = dataset_name
         
         # 初始化 MLLM（延迟加载）
         self.mllm_model = None
@@ -321,7 +324,8 @@ class CoTGenerator(nn.Module):
         # 构建 prompt
         prompt = build_cot_prompt(
             history_qids, history_rs, current_qid,
-            kc_vocab, history_kcs, current_kcs
+            kc_vocab, history_kcs, current_kcs,
+            dataset_name=self.dataset_name
         )
         
         # 生成 CoT
@@ -423,18 +427,34 @@ class CoTGenerator(nn.Module):
                 cot_text = ""
             cot_text = cot_text.strip()
             
-            if not cot_text or not validate_cot(cot_text):
+            # 确定语言
+            from .cot_prompts import DATASET_LANGUAGE
+            language = DATASET_LANGUAGE.get(self.dataset_name, 'zh') if self.dataset_name else 'zh'
+            
+            if not cot_text or not validate_cot(cot_text, language=language):
                 print(f"[CoTGenerator] 警告: 生成的 CoT 不符合要求，使用默认文本")
-                # 安全处理知识点列表
-                kc_text = ""
-                if current_kcs and isinstance(current_kcs, list):
-                    try:
-                        kc_names = [kc_vocab.get(kc, f"知识点{kc}") if isinstance(kc, int) else str(kc) 
-                                  for kc in current_kcs[:5]]  # 限制长度避免过长
-                        kc_text = f"当前题目考察知识点：{', '.join(kc_names)}。" if kc_names else ""
-                    except Exception:
-                        kc_text = ""
-                cot_text = f"学生历史答题记录显示{'掌握' if sum(history_rs) > len(history_rs)/2 else '薄弱'}相关知识点。{kc_text}"
+                # 安全处理知识点列表，根据语言生成默认文本
+                if language == 'en':
+                    kc_text = ""
+                    if current_kcs and isinstance(current_kcs, list):
+                        try:
+                            kc_names = [kc_vocab.get(kc, f"Knowledge Point {kc}") if isinstance(kc, int) else str(kc) 
+                                      for kc in current_kcs[:5]]
+                            kc_text = f"The current question involves concepts: {', '.join(kc_names)}." if kc_names else ""
+                        except Exception:
+                            kc_text = ""
+                    mastery_text = "mastered" if sum(history_rs) > len(history_rs)/2 else "weak"
+                    cot_text = f"Student's historical performance shows {mastery_text} related concepts. {kc_text}"
+                else:  # zh
+                    kc_text = ""
+                    if current_kcs and isinstance(current_kcs, list):
+                        try:
+                            kc_names = [kc_vocab.get(kc, f"知识点{kc}") if isinstance(kc, int) else str(kc) 
+                                      for kc in current_kcs[:5]]
+                            kc_text = f"当前题目考察知识点：{', '.join(kc_names)}。" if kc_names else ""
+                        except Exception:
+                            kc_text = ""
+                    cot_text = f"学生历史答题记录显示{'掌握' if sum(history_rs) > len(history_rs)/2 else '薄弱'}相关知识点。{kc_text}"
             
             # 编码 CoT
             cot_embed = self.encode_cot(cot_text)
@@ -460,8 +480,14 @@ class CoTGenerator(nn.Module):
             
         except Exception as e:
             print(f"[CoTGenerator] 警告: 生成 CoT 失败: {e}")
-            # 返回默认 CoT
-            default_cot = f"学生历史答题记录显示{'掌握' if sum(history_rs) > len(history_rs)/2 else '薄弱'}相关知识点。"
+            # 返回默认 CoT（根据语言）
+            from .cot_prompts import DATASET_LANGUAGE
+            language = DATASET_LANGUAGE.get(self.dataset_name, 'zh') if self.dataset_name else 'zh'
+            if language == 'en':
+                mastery_text = "mastered" if sum(history_rs) > len(history_rs)/2 else "weak"
+                default_cot = f"Student's historical performance shows {mastery_text} related concepts."
+            else:  # zh
+                default_cot = f"学生历史答题记录显示{'掌握' if sum(history_rs) > len(history_rs)/2 else '薄弱'}相关知识点。"
             cot_embed = self.encode_cot(default_cot)
             return default_cot, cot_embed
     

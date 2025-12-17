@@ -4,6 +4,14 @@ CoT (Chain of Thought) Prompt 模板
 """
 from typing import List, Dict, Optional
 
+# 数据集语言映射
+DATASET_LANGUAGE = {
+    'XES3G5M': 'zh',
+    'DBE_KT22': 'en',
+    'Eedi': 'en',
+    'NIPS_task34': 'en'
+}
+
 
 def build_cot_prompt(
     history_qids: List[int],
@@ -11,7 +19,9 @@ def build_cot_prompt(
     current_qid: int,
     kc_vocab: Dict[int, str],
     history_kcs: Optional[List[List[int]]] = None,
-    current_kcs: Optional[List[int]] = None
+    current_kcs: Optional[List[int]] = None,
+    dataset_name: Optional[str] = None,
+    language: Optional[str] = None
 ) -> str:
     """
     构建 CoT 生成提示词
@@ -23,10 +33,35 @@ def build_cot_prompt(
         kc_vocab: 知识点词表 {kc_id: kc_name}
         history_kcs: 历史问题的知识点列表（可选）
         current_kcs: 当前问题的知识点列表（可选）
+        dataset_name: 数据集名称（用于语言检测）
+        language: 语言代码 ('zh' 或 'en')，如果为None则根据dataset_name自动检测
         
     Returns:
         prompt: 完整的提示词字符串
     """
+    # 检测语言
+    if language is None:
+        if dataset_name:
+            language = DATASET_LANGUAGE.get(dataset_name, 'zh')  # 默认中文
+        else:
+            language = 'zh'  # 默认中文
+    
+    # 根据语言选择模板
+    if language == 'en':
+        return _build_cot_prompt_en(history_qids, history_rs, current_qid, kc_vocab, history_kcs, current_kcs)
+    else:  # 'zh'
+        return _build_cot_prompt_zh(history_qids, history_rs, current_qid, kc_vocab, history_kcs, current_kcs)
+
+
+def _build_cot_prompt_zh(
+    history_qids: List[int],
+    history_rs: List[int],
+    current_qid: int,
+    kc_vocab: Dict[int, str],
+    history_kcs: Optional[List[List[int]]] = None,
+    current_kcs: Optional[List[int]] = None
+) -> str:
+    """构建中文CoT提示词"""
     prompt_parts = []
     
     # 1. 系统提示
@@ -73,6 +108,61 @@ def build_cot_prompt(
     return "\n".join(prompt_parts)
 
 
+def _build_cot_prompt_en(
+    history_qids: List[int],
+    history_rs: List[int],
+    current_qid: int,
+    kc_vocab: Dict[int, str],
+    history_kcs: Optional[List[List[int]]] = None,
+    current_kcs: Optional[List[int]] = None
+) -> str:
+    """构建英文CoT提示词"""
+    prompt_parts = []
+    
+    # 1. System prompt
+    prompt_parts.append("You are a knowledge tracing expert who needs to analyze student learning situations and generate reasoning chains.")
+    prompt_parts.append("Please generate structured reasoning chains based on the student's historical answer records and the current question.\n")
+    
+    # 2. Historical interaction information
+    if len(history_qids) > 0:
+        prompt_parts.append("## Student Historical Interaction Records:")
+        for i, (qid, r) in enumerate(zip(history_qids[-5:], history_rs[-5:]), 1):  # Show only last 5
+            result_text = "Correct" if r == 1 else "Incorrect"
+            kc_text = ""
+            if history_kcs and i <= len(history_kcs):
+                kcs = history_kcs[-5:][i-1] if len(history_kcs) >= i else []
+                kc_names = [kc_vocab.get(kc_id, f"Knowledge Point {kc_id}") for kc_id in kcs if kc_id in kc_vocab]
+                if kc_names:
+                    kc_text = f", involving concepts: {', '.join(kc_names)}"
+            prompt_parts.append(f"  Question {qid}: {result_text}{kc_text}")
+        prompt_parts.append("")
+    
+    # 3. Current question information
+    prompt_parts.append("## Current Question:")
+    prompt_parts.append(f"Question ID: {current_qid}")
+    if current_kcs and isinstance(current_kcs, list):
+        kc_names = [kc_vocab.get(kc_id, f"Knowledge Point {kc_id}") if isinstance(kc_id, int) else str(kc_id) 
+                   for kc_id in current_kcs]
+        if kc_names:
+            prompt_parts.append(f"Involved Concepts: {', '.join(kc_names)}")
+    prompt_parts.append("")
+    
+    # 4. Reasoning requirements
+    prompt_parts.append("## Please generate a reasoning chain (following this structure):")
+    prompt_parts.append("1. **Knowledge Point Identification**: Which knowledge points does the current question primarily examine?")
+    prompt_parts.append("2. **Student Historical Mastery**: Based on historical records, which knowledge points has the student mastered/weakened?")
+    prompt_parts.append("3. **Image Key Information**: What key information is contained in the question image (e.g., geometric shapes, annotations, known quantities)?")
+    prompt_parts.append("4. **Possible Error Reasons**: If the student answers incorrectly, what might be the reason? If correct, explain their mastery situation.")
+    prompt_parts.append("5. **Prediction Confidence**: Provide a confidence score between 0 and 1.")
+    prompt_parts.append("")
+    prompt_parts.append("**Notes**:")
+    prompt_parts.append("- If certain marks or information are not present in the image, clearly state 'missing', do not speculate")
+    prompt_parts.append("- The reasoning chain should be concise, controlled within 80-120 tokens")
+    prompt_parts.append("- Focus on knowledge point-level analysis rather than question-level")
+    
+    return "\n".join(prompt_parts)
+
+
 def parse_cot_response(cot_text: str) -> Dict[str, any]:
     """
     解析 CoT 响应，提取结构化信息
@@ -111,7 +201,7 @@ def parse_cot_response(cot_text: str) -> Dict[str, any]:
     return parsed
 
 
-def validate_cot(cot_text: str, min_length: int = 20, max_length: int = 500) -> bool:
+def validate_cot(cot_text: str, min_length: int = 20, max_length: int = 500, language: str = 'zh') -> bool:
     """
     验证 CoT 文本是否符合要求
     
@@ -119,6 +209,7 @@ def validate_cot(cot_text: str, min_length: int = 20, max_length: int = 500) -> 
         cot_text: CoT 文本
         min_length: 最小长度
         max_length: 最大长度
+        language: 语言代码 ('zh' 或 'en')
         
     Returns:
         is_valid: 是否有效
@@ -130,9 +221,21 @@ def validate_cot(cot_text: str, min_length: int = 20, max_length: int = 500) -> 
     if text_len < min_length or text_len > max_length:
         return False
     
-    # 检查是否包含关键部分
-    required_keywords = ['知识点', '掌握', '题目']
-    has_keywords = any(keyword in cot_text for keyword in required_keywords)
+    # 根据语言检查关键词
+    if language == 'en':
+        # 英文关键词（支持多种表达）
+        required_keywords = ['knowledge', 'concept', 'mastery', 'question', 'student', 'learn']
+        # 也检查一些常见变体
+        alt_keywords = ['know', 'point', 'understand', 'correct', 'incorrect']
+        keywords = required_keywords + alt_keywords
+    else:  # 'zh'
+        # 中文关键词
+        required_keywords = ['知识点', '掌握', '题目', '学生']
+        # 也检查一些常见变体
+        alt_keywords = ['知识', '概念', '答对', '答错']
+        keywords = required_keywords + alt_keywords
+    
+    has_keywords = any(keyword.lower() in cot_text.lower() for keyword in keywords)
     
     return has_keywords
 

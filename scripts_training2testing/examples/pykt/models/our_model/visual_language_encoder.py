@@ -185,7 +185,14 @@ class VisualLanguageEncoder(nn.Module):
     
     def save_feature_cache(self):
         """保存特征缓存"""
-        if not self.use_cache or not self.question_features_cache:
+        if not self.use_cache:
+            print(f"[VisualLanguageEncoder] 缓存功能已禁用，跳过保存")
+            return
+        
+        # 检查缓存是否为空（修复：空字典 len()=0，但我们应该检查是否真的为空）
+        if len(self.question_features_cache) == 0:
+            print(f"[VisualLanguageEncoder] 警告: 特征缓存为空，可能训练过程中未提取特征，跳过保存")
+            print(f"[VisualLanguageEncoder] 提示: 这可能是正常的，如果特征提取失败或数据集较小")
             return
         
         cache_path = self._get_cache_path()
@@ -492,7 +499,7 @@ def build_img_path_dict(dataset_name: str, data_config: dict) -> Dict[int, str]:
                 qid = int(filename.replace('.jpg', ''))
                 img_path_dict[qid] = os.path.join(q_imgs_dir, filename)
     
-    elif "NIPS_task34" in dataset_name:
+    elif "NIPS_task34" in dataset_name or "nips_task34" in dataset_name or "Eedi" in dataset_name or "eedi" in dataset_name:
         # NIPS_task34的图片路径：图片直接存放在images文件夹下
         # 注意：NIPS_task34数据集本身就有题目图片，不需要预处理生成
         dpath = data_config.get("dpath", "")
@@ -513,40 +520,63 @@ def build_img_path_dict(dataset_name: str, data_config: dict) -> Dict[int, str]:
             print(f"[build_img_path_dict] 警告: 无法找到NIPS_task34的images目录，尝试过的路径: {possible_paths}")
             return img_path_dict
         
-        # 尝试获取qid映射（如果存在）
+        # 尝试获取qid映射（如果存在，这是可选的）
+        # 根据 prepare_q_imgs.py 的逻辑：
+        # 1. 图片文件名（如 "823.jpg"）-> 原始qid（字符串 "823"）
+        # 2. 如果有映射，使用 qid_ori2new[原始qid] 获取新qid
+        # 3. 最终使用 int(新qid) 作为键
         qid_mapping = None
         try:
-            # 尝试导入映射函数
-            import sys
-            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../prepare_q_img_for_kt_dataset'))
-            from my_utils import get_qid_ori2new
-            qid_mapping = get_qid_ori2new(data_config)
-            print(f"[build_img_path_dict] NIPS_task34: 已加载qid映射，映射数量: {len(qid_mapping) if qid_mapping else 0}")
+            # 方法1: 尝试从 keyid2idx.json 直接加载（更直接）
+            keyid2idx_file = os.path.join(dpath, "keyid2idx.json")
+            if os.path.exists(keyid2idx_file):
+                import json
+                with open(keyid2idx_file, 'r') as f:
+                    keyid2idx = json.load(f)
+                if "questions" in keyid2idx:
+                    qid_mapping = keyid2idx["questions"]
+                    print(f"[build_img_path_dict] NIPS_task34: 从 keyid2idx.json 加载了qid映射，映射数量: {len(qid_mapping)}")
         except Exception as e:
-            print(f"[build_img_path_dict] NIPS_task34: 无法加载qid映射，将使用原始qid: {e}")
-            qid_mapping = None
+            pass
+        
+        # 方法2: 如果方法1失败，尝试使用 my_utils 函数（备选方案）
+        if qid_mapping is None:
+            try:
+                import sys
+                mapping_path = os.path.join(os.path.dirname(__file__), '../../../../prepare_q_img_for_kt_dataset')
+                if os.path.exists(mapping_path):
+                    sys.path.insert(0, mapping_path)
+                    from my_utils import get_qid_ori2new
+                    qid_mapping = get_qid_ori2new(data_config)
+                    if qid_mapping:
+                        print(f"[build_img_path_dict] NIPS_task34: 从 my_utils 加载了qid映射，映射数量: {len(qid_mapping)}")
+            except (ImportError, ModuleNotFoundError):
+                pass
+            except Exception as e:
+                pass
         
         # 扫描所有图片文件（支持多种格式）
         for filename in os.listdir(images_dir):
-            # 支持.jpg, .png等格式
+            # 支持.jpg, .jpeg, .png等格式
             if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-                # 提取qid（文件名去掉扩展名）
+                # 提取原始qid（文件名去掉扩展名，保持字符串格式以匹配映射键）
                 qid_str = os.path.splitext(filename)[0]
+                
                 try:
-                    qid_ori = int(qid_str)
-                    # 如果存在映射，使用映射后的qid；否则使用原始qid
-                    qid = qid_mapping.get(qid_str, qid_ori) if qid_mapping else qid_ori
-                    # 如果映射是字符串，转换为int
-                    if isinstance(qid, str):
-                        try:
-                            qid = int(qid)
-                        except ValueError:
-                            qid = qid_ori
+                    # 根据 prepare_q_imgs.py 的逻辑：
+                    # 如果有映射，使用映射后的qid；否则使用原始qid（转为int）
+                    if qid_mapping and qid_str in qid_mapping:
+                        # 使用映射后的qid（确保是int）
+                        qid_new = qid_mapping[qid_str]
+                        qid = int(qid_new) if isinstance(qid_new, (int, str)) else int(qid_str)
+                    else:
+                        # 没有映射，直接使用原始qid（转为int）
+                        qid = int(qid_str)
                     
                     img_path = os.path.join(images_dir, filename)
                     img_path_dict[qid] = img_path
-                except ValueError:
-                    print(f"[build_img_path_dict] 警告: 无法解析文件名的qid: {filename}")
+                except (ValueError, TypeError) as e:
+                    print(f"[build_img_path_dict] 警告: 无法解析文件名的qid: {filename}, 错误: {e}")
                     continue
     
     print(f"[build_img_path_dict] 已构建 {len(img_path_dict)} 个问题ID到图片路径的映射")

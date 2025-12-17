@@ -1,0 +1,140 @@
+基本版 ThinkKT 流程：
+
+    1. 【千问大模型（Qwen2.5-VL）】
+    题目图片 + Prompt 
+    → 提取视觉特征 
+    → v_t: 题目表征 (d_question=1024)
+
+    2. 【知识点分类器（kc_classifier）】
+    v_t (题目表征)
+    → 预测知识点分布
+    → k_t: 知识点分布 (num_c维度，每个知识点0-1概率)
+
+    3. 【答案嵌入（answer_emb）】
+    rseqs (答题结果: 0或1)
+    → Embedding层
+    → a_emb: 答案表征 (d_answer维度)
+
+    4. 【特征融合】
+    z = [v_t, a_emb, k_t]  # 拼接
+    → fusion_layer (Linear + LayerNorm + ReLU + Dropout)
+    → z (d_knowledge=512)
+
+    5. 【序列建模】
+    z
+    → LSTM 或 Transformer（带因果掩码）
+    → h_t (知识状态表示)
+
+    6. 【预测】
+    h_t
+    → predictor (Linear + Sigmoid)
+    → y: 预测下一道题目答题正确的概率
+
+ThinkKT CoT 版本流程
+    1. 【CoT生成（CoTGenerator）】
+    输入：
+    ├─ 题目图片
+    ├─ 历史交互序列（history_qids, history_rs）
+    └─ 知识点信息（可选，用于构建Prompt）
+    
+    → 构建Prompt（包含历史交互信息和当前题目）
+    → 千问大模型（Qwen2.5-VL）
+    → CoT文本
+
+    2. 【文本编码（encode_cot）】
+    CoT文本
+    → Sentence-Transformers（文本嵌入模型）
+    → r_embed: CoT表征 (d_cot=384)
+
+    3. 【特征融合（ThinkKTNet）】
+    z = [v_t, a_emb, r_embed, k_t]
+    ├─ v_t: 题目特征（从图片提取的视觉特征）
+    ├─ a_emb: 答案表征（答题结果嵌入）
+    ├─ r_embed: CoT表征 ⭐（新增）
+    └─ k_t: 知识点分布
+    
+    → fusion_layer
+    → z (d_knowledge=512)
+
+    4. 【序列建模】
+    z → LSTM 或 Transformer（带因果掩码）
+    → h_t
+
+    5. 【预测】
+    h_t → predictor
+    → y: 预测下一道题目答题正确的概率
+
+ThinkKT 强化学习版本
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    ThinkKT RL 版本训练流程                        │
+    └─────────────────────────────────────────────────────────────────┘
+
+    1. 【数据输入】
+    ├─ qseqs: 问题ID序列 (batch, seq_len)
+    ├─ rseqs: 历史答题结果序列 (batch, seq_len)
+    ├─ shft_rseqs: 真实标签（下一题答题结果）(batch, seq_len)
+    ├─ cseqs: 知识点序列 (batch, seq_len, max_concepts)
+    ├─ img_path_dict: 题目图片路径映射
+    └─ kc_vocab: 知识点词表
+
+    2. 【CoT生成】（使用当前策略）
+    CoTGenerator (可训练参数)
+    ├─ 输入：题目图片 + 历史交互 + 知识点信息
+    ├─ 千问大模型 → CoT文本
+    └─ 文本编码器 → CoT嵌入 (batch, seq_len, d_cot)
+
+    3. 【KT模型预测】
+    
+    3a. 不使用CoT的预测（基线）
+        ThinkKT (use_cot=False)
+        └─ y_no_cot: (batch, seq_len)
+    
+    3b. 使用CoT的预测
+        ThinkKT (use_cot=True, 输入生成的CoT嵌入)
+        └─ y_with_cot: (batch, seq_len)
+
+    4. 【奖励计算】R = R_pred + R_cons + R_kc + R_len
+    
+    4a. R_pred: 预测准确性奖励
+        = (BCE_loss(无CoT) - BCE_loss(有CoT)) × 1.0
+        → 鼓励CoT提升预测准确性
+    
+    4b. R_cons: 一致性奖励
+        = consistency_score × 0.5
+        → 鼓励CoT中的"掌握/薄弱"描述与预测概率一致
+        - CoT说"掌握" → 预测概率应该高
+        - CoT说"薄弱" → 预测概率应该低
+    
+    4c. R_kc: 知识点覆盖奖励
+        = coverage_score × 0.3
+        → 鼓励CoT提及题目的知识点
+        - 计算CoT中提到的知识点 / 题目总知识点数
+    
+    4d. R_len: 长度惩罚
+        = length_penalty × 0.1
+        → 鼓励CoT长度在80-120 tokens之间
+        - 太短或太长都会受到惩罚
+
+    5. 【策略梯度优化】（REINFORCE算法）
+    
+    5a. 计算优势（Advantage）
+        advantages = rewards - rewards.mean()
+        → 减去基线，减少方差
+    
+    5b. 计算损失
+        loss = -(log_probs × advantages).mean()
+        → 最大化（奖励 × 动作概率）
+    
+    5c. 反向传播
+        optimizer.zero_grad()
+        loss.backward()
+        clip_grad_norm_(max_norm=1.0)
+        optimizer.step()
+        → 更新CoT生成器参数
+
+    6. 【输出指标】
+    ├─ reward_mean: 平均奖励
+    ├─ reward_std: 奖励标准差
+    ├─ loss: RL损失值
+    └─ advantage_mean: 平均优势值

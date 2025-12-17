@@ -8,6 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Dict
 import sys
+import json
+import pandas as pd
 
 # 导入自定义模块
 from .visual_language_encoder import VisualLanguageEncoder, build_img_path_dict
@@ -18,6 +20,123 @@ try:
 except ImportError:
     COT_AVAILABLE = False
     CoTGenerator = None
+
+
+def load_kc_vocab(dataset_name: str, data_config: dict) -> Dict[int, str]:
+    """
+    从数据集文件中加载知识点词表
+    
+    Args:
+        dataset_name: 数据集名称
+        data_config: 数据配置字典，需要包含 'dpath' 字段
+        
+    Returns:
+        kc_vocab: 知识点词表 {kc_id: kc_name}
+    """
+    kc_vocab = {}
+    dpath = data_config.get('dpath', '')
+    
+    if not dpath:
+        print(f"[ThinkKT] 警告: data_config中没有'dpath'字段，无法加载知识点词表")
+        return kc_vocab
+    
+    try:
+        if "DBE_KT22" in dataset_name:
+            # DBE_KT22: 从 KCs.csv 加载
+            # 格式: id,name,description
+            # 尝试多个可能的路径
+            possible_paths = [
+                os.path.join(dpath, "KCs.csv"),
+                os.path.join(dpath, "../2_DBE_KT22_datafiles_100102_csv/KCs.csv"),
+                os.path.join(dpath, "../../2_DBE_KT22_datafiles_100102_csv/KCs.csv"),
+                "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/DBE_KT22/2_DBE_KT22_datafiles_100102_csv/KCs.csv",
+                "/home3/zhiyu/code-4/kt_analysis_generation/data/DBE_KT22/2_DBE_KT22_datafiles_100102_csv/KCs.csv"
+            ]
+            
+            kcs_file = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    kcs_file = path
+                    break
+            
+            if kcs_file and os.path.exists(kcs_file):
+                df_kcs = pd.read_csv(kcs_file)
+                # 确保 id 是整数类型
+                for _, row in df_kcs.iterrows():
+                    kc_id = int(row['id'])
+                    kc_name = str(row['name']).strip()
+                    kc_vocab[kc_id] = kc_name
+                print(f"[ThinkKT] 从 {kcs_file} 加载了 {len(kc_vocab)} 个知识点")
+            else:
+                print(f"[ThinkKT] 警告: 找不到KCs.csv文件，尝试过的路径: {possible_paths[:3]}")
+        
+        elif "XES3G5M" in dataset_name:
+            # XES3G5M: 从 metadata/kc_routes_map.json 加载
+            # 格式: {"0": "知识点名称", "1": "知识点名称", ...}
+            kc_file = os.path.join(dpath, "metadata", "kc_routes_map.json")
+            if not os.path.exists(kc_file):
+                # 尝试其他可能的路径
+                kc_file = os.path.join(dpath, "kc_routes_map.json")
+            
+            if os.path.exists(kc_file):
+                with open(kc_file, 'r', encoding='utf-8') as f:
+                    kc_map = json.load(f)
+                # 将字符串键转换为整数
+                for kc_id_str, kc_name in kc_map.items():
+                    try:
+                        kc_id = int(kc_id_str)
+                        kc_vocab[kc_id] = str(kc_name).strip()
+                    except (ValueError, TypeError):
+                        continue
+                print(f"[ThinkKT] 从 {kc_file} 加载了 {len(kc_vocab)} 个知识点")
+            else:
+                print(f"[ThinkKT] 警告: 找不到文件 {kc_file}")
+        
+        elif "NIPS_task34" in dataset_name or "nips_task34" in dataset_name or "Eedi" in dataset_name or "eedi" in dataset_name:
+            # NIPS_task34/Eedi: 从 metadata/subject_metadata.csv 加载
+            # 格式: SubjectId,Name,ParentId,Level
+            # 注意：NIPS_task34 和 Eedi 是同一个数据集
+            # 尝试多个可能的路径
+            possible_paths = [
+                os.path.join(dpath, "metadata", "subject_metadata.csv"),
+                os.path.join(dpath, "../metadata/subject_metadata.csv"),
+                os.path.join(dpath, "../../metadata/subject_metadata.csv"),
+                os.path.join(dpath, "subject_metadata.csv"),
+                "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/Eedi/data/metadata/subject_metadata.csv",
+                "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/NIPS_task34/metadata/subject_metadata.csv"
+            ]
+            
+            subject_file = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    subject_file = path
+                    break
+            
+            if subject_file and os.path.exists(subject_file):
+                df_subjects = pd.read_csv(subject_file)
+                # 确保 SubjectId 是整数类型
+                for _, row in df_subjects.iterrows():
+                    try:
+                        subject_id = int(row['SubjectId'])
+                        subject_name = str(row['Name']).strip()
+                        # 跳过空值
+                        if pd.notna(subject_id) and pd.notna(subject_name):
+                            kc_vocab[subject_id] = subject_name
+                    except (ValueError, TypeError):
+                        continue
+                print(f"[ThinkKT] 从 {subject_file} 加载了 {len(kc_vocab)} 个主题（作为知识点）")
+            else:
+                print(f"[ThinkKT] 警告: 找不到subject_metadata.csv文件，尝试过的路径: {possible_paths[:3]}")
+        
+        else:
+            print(f"[ThinkKT] 警告: 未知的数据集 {dataset_name}，无法加载知识点词表")
+    
+    except Exception as e:
+        print(f"[ThinkKT] 加载知识点词表时出错: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return kc_vocab
 
 
 class ThinkKT(nn.Module):
@@ -109,16 +228,18 @@ class ThinkKT(nn.Module):
                     d_cot=self.d_cot,
                     cache_dir=config.get('cot_cache_dir', 'cot_cache'),
                     device=self.device,
-                    use_cache=True
+                    use_cache=True,
+                    dataset_name=self.dataset_name
                 )
                 print(f"[ThinkKT] CoT 生成器初始化完成")
                 sys.stdout.flush()
         else:
             self.cot_generator = None
         
-        # 构建知识点词表（需要从数据配置中获取）
-        # TODO: 从实际数据中加载知识点词表
-        self.kc_vocab = {}  # {kc_id: kc_name}
+        # 构建知识点词表（从数据集文件中加载）
+        self.kc_vocab = load_kc_vocab(self.dataset_name, data_config)  # {kc_id: kc_name}
+        if len(self.kc_vocab) == 0:
+            print(f"[ThinkKT] 警告: 知识点词表为空，CoT生成时将使用默认的知识点ID")
         
         # 初始化知识状态追踪器
         kt_config = {
