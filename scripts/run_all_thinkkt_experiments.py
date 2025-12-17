@@ -124,7 +124,7 @@ def main():
     os.chdir(args.base_dir)
     
     # 创建日志目录
-    log_dir = "experiment_logs"
+    log_dir = "experiment_input_logs"
     os.makedirs(log_dir, exist_ok=True)
     
     # 总日志文件（使用绝对路径，避免切换目录后找不到）
@@ -226,7 +226,7 @@ def main():
         print(f"分配GPU: cuda:{assigned_gpu} (当前循环索引: {idx}, 原始实验编号: {original_exp_idx})")
         
         # 构建保存目录名称（实际路径会在训练时自动生成，这里只是基础目录）
-        version_name = "cot_version" if args.use_cot else "baseline_version"
+        version_name = "cot_version_input" if args.use_cot else "baseline_version_input"
         base_save_dir = f"saved_model/{version_name}"
         
         exp_name = f"{exp['dataset']}_{exp['seq_model_type']}_layers{exp['num_transformer_layers'] or exp['num_lstm_layers']}"

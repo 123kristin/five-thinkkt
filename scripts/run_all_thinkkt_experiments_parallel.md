@@ -17,17 +17,41 @@
 
 为每个GPU启动一个独立的脚本，分配不同的实验：
 
+thikkt模型基本版本
+
 ```bash
 # 终端1：运行实验 1,5,9,13,17 (GPU 0)
 python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1,2,3,4,5,6"
 python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version --dataset_name DBE_KT22
+python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1"
 # 终端2：运行实验 2,6,10,14,18 (GPU 1)  
 python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7,8,9,10,11,12"
-
+python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7"
 # 终端3：运行实验 3,7,11,15 (GPU 2)
-python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "13,14,15,16,17,18"
-
+python run_all_thinkkt_experiments.py --gpu_id "2" --experiment_range "13,14,15,16,17,18"
+python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version --dataset_name nips_task34
+python run_all_thinkkt_experiments.py --gpu_id "2" --experiment_range "13"
 ```
+thinkkt模型CoT版本
+```bash
+# 终端1：运行实验 1,5,9,13,17 (GPU 0)
+python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1,2,3,4,5,6" --use_cot 1
+python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version --dataset_name DBE_KT22
+python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1" --use_cot 1
+# 终端2：运行实验 2,6,10,14,18 (GPU 1)  
+python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7,8,9,10,11,12" --use_cot 1
+python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7" --use_cot 1
+# 终端3：运行实验 3,7,11,15 (GPU 2)
+python run_all_thinkkt_experiments.py --gpu_id "2" --experiment_range "13,14,15,16,17,18" --use_cot 1
+python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version --dataset_name nips_task34
+python run_all_thinkkt_experiments.py --gpu_id "2" --experiment_range "13" --use_cot 1
+```
+
+
+
+
+
+
 
 ### 方案2：使用GNU parallel（如果安装了）
 

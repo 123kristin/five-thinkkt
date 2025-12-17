@@ -201,7 +201,7 @@ def parse_cot_response(cot_text: str) -> Dict[str, any]:
     return parsed
 
 
-def validate_cot(cot_text: str, min_length: int = 20, max_length: int = 500, language: str = 'zh') -> bool:
+def validate_cot(cot_text: str, min_length: int = 20, max_length: int = 1000, language: str = 'zh') -> bool:
     """
     验证 CoT 文本是否符合要求
     

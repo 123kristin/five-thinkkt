@@ -265,12 +265,12 @@ class ThinkKT(nn.Module):
         print(f"[ThinkKT] 模型初始化完成")
     
     def _get_question_features(
-        self, 
+        self,
         qids: torch.Tensor,
         seq_len: int
-    ) -> tuple:
+    ) -> torch.Tensor:
         """
-        获取题目特征和知识点分布
+        获取题目特征
         
         Args:
             qids: 问题ID张量 (batch_size, seq_len)
@@ -278,7 +278,6 @@ class ThinkKT(nn.Module):
             
         Returns:
             v_t: 题目特征 (batch_size, seq_len, d_question)
-            k_t: 知识点分布 (batch_size, seq_len, num_c)
         """
         if not self.use_visual or self.visual_encoder is None:
             # 如果不使用视觉特征，返回零向量
@@ -287,20 +286,16 @@ class ThinkKT(nn.Module):
                 (batch_size, seq_len, self.d_question),
                 device=self.device
             )
-            k_t = torch.zeros(
-                (batch_size, seq_len, self.num_c),
-                device=self.device
-            )
-            return v_t, k_t
+            return v_t
         
-        # 使用多模态编码器提取特征
-        v_t, k_t = self.visual_encoder(
+        # 使用多模态编码器提取特征（不再预测知识点分布）
+        v_t, _ = self.visual_encoder(
             qids,
             self.img_path_dict,
-            return_kc=True
+            return_kc=False
         )
         
-        return v_t, k_t
+        return v_t
     
     def _get_cot_embeddings(
         self,
@@ -451,17 +446,24 @@ class ThinkKT(nn.Module):
             masks = masks.to(self.device)
         
         # 获取题目特征（使用历史问题序列）
-        v_t, k_t = self._get_question_features(qseqs, seq_len)
+        v_t = self._get_question_features(qseqs, seq_len)
+        
+        # 获取知识点序列
+        cseqs = data.get('cseqs', None)  # 知识点序列 (batch, seq_len, max_concepts)
+        if cseqs is None:
+            # 如果没有知识点序列，创建零填充
+            cseqs = torch.full((batch_size, seq_len, 1), -1, device=self.device)
+        else:
+            cseqs = cseqs.to(self.device)
         
         # 获取CoT嵌入
-        cseqs = data.get('cseqs', None)  # 知识点序列（可选）
         r_embed = self._get_cot_embeddings(qseqs, rseqs, cseqs)
         
         # 前向传播
         y = self.kt_net(
             v_t=v_t,
-            a_t=rseqs,  # 使用历史答题结果
-            k_t=k_t,
+            c=cseqs,  # 知识点序列
+            r=rseqs,  # 使用历史答题结果
             r_embed=r_embed,
             mask=masks
         )  # (batch, seq_len-1)

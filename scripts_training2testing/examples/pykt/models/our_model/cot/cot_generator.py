@@ -138,10 +138,13 @@ class CoTGenerator(nn.Module):
         
         print(f"[CoTGenerator] 正在加载 MLLM: {self.mllm_name}")
         try:
+            # 获取指定设备，避免使用device_map="auto"导致占用所有GPU
+            target_device = self._get_device()
+            print(f"[CoTGenerator] MLLM将加载到设备: {target_device}")
             self.mllm_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.mllm_name,
                 torch_dtype=torch.bfloat16,
-                device_map="auto" if torch.cuda.is_available() else None,
+                device_map={"": target_device} if torch.cuda.is_available() else None,
                 trust_remote_code=True
             )
             self.mllm_processor = AutoProcessor.from_pretrained(
@@ -432,7 +435,11 @@ class CoTGenerator(nn.Module):
             language = DATASET_LANGUAGE.get(self.dataset_name, 'zh') if self.dataset_name else 'zh'
             
             if not cot_text or not validate_cot(cot_text, language=language):
+                # 添加调试信息：显示实际生成的文本（前200字符）
+                debug_text = cot_text[:200] if cot_text else "(空文本)"
+                text_len = len(cot_text.strip()) if cot_text else 0
                 print(f"[CoTGenerator] 警告: 生成的 CoT 不符合要求，使用默认文本")
+                print(f"[CoTGenerator] 调试信息: 文本长度={text_len}, 语言={language}, 前200字符={debug_text}")
                 # 安全处理知识点列表，根据语言生成默认文本
                 if language == 'en':
                     kc_text = ""

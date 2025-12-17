@@ -105,12 +105,14 @@ class ThinkKTNet(nn.Module):
         self.use_cot = config.get('use_cot', False)
         self.seq_model_type = config.get('seq_model_type', 'transformer')
         
-        # 答题结果嵌入（0: 错误, 1: 正确）
-        self.d_answer = self.d_question // 4  # 答题结果嵌入维度
-        self.answer_emb = nn.Embedding(2, self.d_answer)
+        # 知识点嵌入维度（与题目特征维度一致，用于知识点平均嵌入）
+        self.dim_qc = self.d_question  # 知识点嵌入维度
+        self.KCEmbs = nn.Embedding(self.num_c, self.dim_qc)  # 知识点嵌入
         
         # 计算融合后的输入维度
-        d_input = self.d_question + self.d_answer + self.num_c
+        # 不使用CoT: v_t (d_question) + kc_avg_embs (dim_qc) + zero_vector (dim_qc * 2)
+        # 使用CoT: v_t (d_question) + r_embed (d_cot) + kc_avg_embs (dim_qc) + zero_vector (dim_qc * 2)
+        d_input = self.d_question + self.dim_qc + self.dim_qc * 2
         if self.use_cot:
             d_input += self.d_cot
         
@@ -167,11 +169,41 @@ class ThinkKTNet(nn.Module):
             nn.Sigmoid()
         )
     
+    def get_kc_avg_emb(self, c, pad_idx=-1):
+        """
+        计算知识点平均嵌入（类似CRKT）
+        
+        Args:
+            c: 知识点序列 (batch_size, seq_len, max_concepts)
+            pad_idx: 填充索引，默认为-1
+            
+        Returns:
+            mean_emb: 知识点平均嵌入 (batch_size, seq_len, dim_qc)
+        """
+        # 1. 掩码：True 表示有效索引
+        mask = c != pad_idx  # [bz, len, max_concepts]
+        
+        # 2. 安全索引：把 -1 等填充值映射到 0（后面会被 mask 忽略）
+        c_safe = c.masked_fill(~mask, 0)  # [bz, len, max_concepts]
+        
+        # 3. 查表得到所有向量；填充位置向量将被后续 mask 清零
+        embs = self.KCEmbs(c_safe)  # [bz, len, max_concepts, dim_qc]
+        
+        # 4. 将填充位置向量置 0
+        embs = embs * mask.unsqueeze(-1)  # [bz, len, max_concepts, dim_qc]
+        
+        # 5. 求均值（避免除 0）
+        sum_emb = embs.sum(dim=-2)  # [bz, len, dim_qc]
+        valid_cnt = mask.sum(dim=-1, keepdim=True).clamp(min=1)  # [bz, len, 1]
+        mean_emb = sum_emb / valid_cnt  # [bz, len, dim_qc]
+        
+        return mean_emb
+    
     def forward(
         self,
         v_t: torch.Tensor,
-        a_t: torch.Tensor,
-        k_t: torch.Tensor,
+        c: torch.Tensor,
+        r: torch.Tensor,
         r_embed: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
         return_kc_mastery: bool = False
@@ -181,8 +213,8 @@ class ThinkKTNet(nn.Module):
         
         Args:
             v_t: 题目特征 (batch_size, seq_len, d_question)
-            a_t: 答题结果 (batch_size, seq_len) 0或1
-            k_t: 知识点分布 (batch_size, seq_len, num_c)
+            c: 知识点序列 (batch_size, seq_len, max_concepts)
+            r: 答题结果 (batch_size, seq_len) 0或1
             r_embed: CoT嵌入 (batch_size, seq_len, d_cot) 或 None
             mask: 掩码 (batch_size, seq_len) True表示有效位置
             return_kc_mastery: 是否返回知识点掌握度
@@ -196,18 +228,32 @@ class ThinkKTNet(nn.Module):
         
         # 确保所有输入在正确设备上
         v_t = v_t.to(device)
-        a_t = a_t.to(device)
-        k_t = k_t.to(device)
+        c = c.to(device)
+        r = r.to(device)
         
-        # 1. 答题结果嵌入
-        a_emb = self.answer_emb(a_t.long())  # (batch_size, seq_len, d_answer)
+        # 1. 计算知识点平均嵌入
+        kc_avg_embs = self.get_kc_avg_emb(c)  # (batch_size, seq_len, dim_qc)
         
-        # 2. 特征融合
+        # 2. 创建零向量
+        zero_vector = torch.zeros(batch_size, seq_len, self.dim_qc * 2, device=device)
+        
+        # 3. 根据答对/答错拼接输入（类似CRKT）
+        # 答对时（r==1）：[v_t, kc_avg_embs, zero_vector]
+        # 答错时（r==0）：[zero_vector, v_t, kc_avg_embs]
         if self.use_cot and r_embed is not None:
             r_embed = r_embed.to(device)
-            z = torch.cat([v_t, a_emb, r_embed, k_t], dim=-1)  # (batch_size, seq_len, d_input)
+            # 如果有CoT，将其插入到中间位置
+            # 答对：[v_t, r_embed, kc_avg_embs, zero_vector]
+            # 答错：[zero_vector, v_t, r_embed, kc_avg_embs]
+            correct_input = torch.cat([v_t, r_embed, kc_avg_embs, zero_vector], dim=-1)
+            wrong_input = torch.cat([zero_vector, v_t, r_embed, kc_avg_embs], dim=-1)
         else:
-            z = torch.cat([v_t, a_emb, k_t], dim=-1)  # (batch_size, seq_len, d_input)
+            correct_input = torch.cat([v_t, kc_avg_embs, zero_vector], dim=-1)
+            wrong_input = torch.cat([zero_vector, v_t, kc_avg_embs], dim=-1)
+        
+        # 使用掩码选择答对/答错的输入
+        mask_r = (r == 1).unsqueeze(-1).expand_as(correct_input)  # (batch_size, seq_len, d_input)
+        z = torch.where(mask_r, correct_input, wrong_input)  # (batch_size, seq_len, d_input)
         
         z = self.fusion_layer(z)  # (batch_size, seq_len, d_knowledge)
         
@@ -252,5 +298,7 @@ class ThinkKTNet(nn.Module):
         """重写to方法，确保所有组件都移动到正确设备"""
         super().to(device)
         self.device = device
+        # 确保知识点嵌入也在正确设备上
+        self.KCEmbs = self.KCEmbs.to(device)
         return self
 

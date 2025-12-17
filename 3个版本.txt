@@ -138,3 +138,47 @@ ThinkKT 强化学习版本
     ├─ reward_std: 奖励标准差
     ├─ loss: RL损失值
     └─ advantage_mean: 平均优势值
+
+改进1：
+    我的提示词：
+        当前thinkkt模型基本版本的输入融合为“
+        v_t：题目特征（视觉特征）
+        a_emb：答案嵌入（0/1 → 嵌入向量）
+        k_t：知识点分布（从视觉特征预测，shape: (batch, seq_len, num_c)）
+        注意：k_t 是由 visual_encoder 从图片预测的知识点分布，不是直接输入的知识点标签。” 
+        而crkt入为“具体结构：
+        习题嵌入：q_emb = self.QEmbs(q)
+        知识点平均嵌入：kc_avg_embs = self.get_kc_avg_emb(c)（对多个知识点求平均）
+        拼接：input_components = [q_emb, content_emb(可选), kc_avg_embs]
+        答对/答错编码：
+        答对时：[q_emb, content_emb(可选), kc_avg_embs, zero_vector]
+        答错时：[zero_vector, q_emb, content_emb(可选), kc_avg_embs]
+        通过零向量的位置来编码答对/答错，而不是直接拼接答案信息。最终输入是 e_emb，传给 RNN/LSTM。”
+        我的需求是将thinkkt模型的输入改为参照crkt模型的做法，但是习题嵌入用我们的“v_t：题目特征（视觉特征）”，然后不适用生成知识点分布，而是使用类似crkt使用的“知识点平均嵌入：kc_avg_embs “，答对答错时也参照crkt模型使用的零向量左右拼接来区分。你明白我的需求吗？你先别实现代码，你先简洁回答我，需要做的事情  @thinkkt_net.py @crkt.py 
+
+分析“
+    需要做的事：
+        移除答案嵌入（a_emb）：不再使用 answer_emb 将 0/1 转为嵌入向量
+        移除预测的知识点分布（k_t）：不再从视觉特征预测 k_t，改为使用输入的知识点标签
+        添加知识点平均嵌入计算：类似 CRKT 的 get_kc_avg_emb，从输入的 c（知识点序列）计算 kc_avg_embs
+        修改输入融合方式：
+        答对时（r==1）：[v_t, kc_avg_embs, zero_vector]
+        答错时（r==0）：[zero_vector, v_t, kc_avg_embs]
+        通过零向量位置编码答对/答错
+        调整融合层输入维度：从 d_question + d_answer + num_c 改为 d_question + dim_qc + dim_qc*2（v_t + kc_avg_embs + zero_vector）
+        修改 ThinkKT 主模型：移除 k_t 的生成，直接传入 c 给 ThinkKTNet 计算知识点平均嵌入
+        总结：用知识点标签的平均嵌入替代预测的知识点分布，用零向量位置替代答案嵌入，其他保持不变
+
+对比：
+    ThinkKT：
+    输入融合 → fusion_layer（Linear + LayerNorm + ReLU + Dropout）
+    序列建模 → LSTM/Transformer
+    预测头 → predictor（Linear + ReLU + Dropout + Linear + Sigmoid）直接输出概率
+    CRKT：
+    输入融合 → 直接拼接（无 fusion_layer）
+    序列建模 → LSTM/GRU
+    预测所有问题分数 → q_scores_extractor（Dropout + Linear）输出 (batch, seq_len, num_q)
+    选择对应问题 → 通过 one_hot(q_shift) 与 q_scores 点积，得到该问题的预测概率
+    关键区别：
+    ThinkKT：先融合降维，再序列建模，最后直接预测概率
+    CRKT：直接序列建模，预测所有问题的分数矩阵，再通过 one_hot 选择对应问题

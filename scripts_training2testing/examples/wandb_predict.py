@@ -5,7 +5,7 @@ import argparse
 # 先解析参数，设置环境变量
 parser = argparse.ArgumentParser()
 parser.add_argument("--bz", type=int, default=128)
-parser.add_argument("--save_dir", type=str, default="saved_model/XES3G5M_0_0.0001_32_thinkkt_qkcs_1024_384_512_0.1_transformer_6_8_2_/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct_False_True_features")
+parser.add_argument("--save_dir", type=str, default="saved_model/baseline_version/nips_task34_0_0.0001_32_thinkkt_qkcs_1024_384_512_0.1_transformer_2_8_2_False_True_features")
 parser.add_argument("--fusion_type", type=str, default="late_fusion")
 parser.add_argument("--use_wandb", type=int, default=0)
 parser.add_argument("--gpu_id", type=str, default="0", help="指定使用的GPU ID，如'0','1','2'等")
