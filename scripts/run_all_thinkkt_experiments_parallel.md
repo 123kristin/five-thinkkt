@@ -23,6 +23,8 @@ thikkt模型基本版本
 # 终端1：运行实验 1,5,9,13,17 (GPU 0)
 python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1,2,3,4,5,6"
 python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version --dataset_name DBE_KT22
+python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version_input --dataset_name DBE_KT22
+python wandb_predict.py --save_dir saved_model/baseline_version_input/DBE_KT22_0_0.0001_32_thinkkt_qkcs_1024_384_512_0.1_transformer_2_8_2_False_True_features --gpu_id "0"
 python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1"
 # 终端2：运行实验 2,6,10,14,18 (GPU 1)  
 python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7,8,9,10,11,12"
@@ -36,7 +38,7 @@ thinkkt模型CoT版本
 ```bash
 # 终端1：运行实验 1,5,9,13,17 (GPU 0)
 python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1,2,3,4,5,6" --use_cot 1
-python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version --dataset_name DBE_KT22
+python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version_input --dataset_name DBE_KT22 --use_cot 1
 python run_all_thinkkt_experiments.py --gpu_id "0" --experiment_range "1" --use_cot 1
 # 终端2：运行实验 2,6,10,14,18 (GPU 1)  
 python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7,8,9,10,11,12" --use_cot 1

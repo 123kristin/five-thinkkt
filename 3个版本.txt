@@ -182,3 +182,7 @@ ThinkKT 强化学习版本
     关键区别：
     ThinkKT：先融合降维，再序列建模，最后直接预测概率
     CRKT：直接序列建模，预测所有问题的分数矩阵，再通过 one_hot 选择对应问题
+
+保存在：
+    five-thinkkt/scripts_training2testing/examples/saved_model/baseline_version_input这是基本版本，但是输入已经改成类似统一做法，使用题目表征与知识点平均表征，打哪向量左右拼接区分对错
+    five-thinkkt/scripts_training2testing/examples/saved_model/cot_version_input这是CoT版本，生成思维链和思维链表征,DBE_KT22和nips_task34数据集是英文的，思维链就该是英文的，XES3G5M是中文的，生成的思维链是中文的

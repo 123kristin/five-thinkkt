@@ -213,3 +213,4 @@ scripts_training2testing/examples/saved_model/
 scripts_training2testing/examples/features/
 scripts_training2testing/examples/experiment_logs/
 scripts_training2testing/examples/experiment_input_logs/
+scripts_training2testing/examples/cot_cache/

@@ -209,7 +209,12 @@ class CoTGenerator(nn.Module):
     
     def _get_cache_path(self) -> str:
         """获取缓存文件路径"""
-        return os.path.join(self.cache_dir, "cot_cache.jsonl")
+        # return os.path.join(self.cache_dir, "cot_cache.jsonl")
+        if self.dataset_name:
+            cache_file = f"cot_cache_{self.dataset_name}.jsonl"
+        else:
+            cache_file = "cot_cache.jsonl"
+        return os.path.join(self.cache_dir, cache_file)
     
     def _load_cot_cache(self):
         """加载 CoT 缓存"""
@@ -431,8 +436,8 @@ class CoTGenerator(nn.Module):
             cot_text = cot_text.strip()
             
             # 确定语言
-            from .cot_prompts import DATASET_LANGUAGE
-            language = DATASET_LANGUAGE.get(self.dataset_name, 'zh') if self.dataset_name else 'zh'
+            from .cot_prompts import get_dataset_language
+            language = get_dataset_language(self.dataset_name)
             
             if not cot_text or not validate_cot(cot_text, language=language):
                 # 添加调试信息：显示实际生成的文本（前200字符）
@@ -477,7 +482,7 @@ class CoTGenerator(nn.Module):
                     'current_qid': current_qid
                 }
                 # 每生成100个新的CoT时，保存一次缓存（避免丢失）
-                if len(self.cot_cache) % 100 == 0 and len(self.cot_cache) > 0:
+                if len(self.cot_cache) % 5 == 0 and len(self.cot_cache) > 0:
                     import sys
                     print(f"\n[CoTGenerator] 缓存数量达到 {len(self.cot_cache)}，自动保存缓存...")
                     sys.stdout.flush()
@@ -488,8 +493,8 @@ class CoTGenerator(nn.Module):
         except Exception as e:
             print(f"[CoTGenerator] 警告: 生成 CoT 失败: {e}")
             # 返回默认 CoT（根据语言）
-            from .cot_prompts import DATASET_LANGUAGE
-            language = DATASET_LANGUAGE.get(self.dataset_name, 'zh') if self.dataset_name else 'zh'
+            from .cot_prompts import get_dataset_language
+            language = get_dataset_language(self.dataset_name)
             if language == 'en':
                 mastery_text = "mastered" if sum(history_rs) > len(history_rs)/2 else "weak"
                 default_cot = f"Student's historical performance shows {mastery_text} related concepts."

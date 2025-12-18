@@ -265,7 +265,7 @@ class ThinkKT(nn.Module):
         print(f"[ThinkKT] 模型初始化完成")
     
     def _get_question_features(
-        self,
+        self, 
         qids: torch.Tensor,
         seq_len: int
     ) -> torch.Tensor:

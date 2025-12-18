@@ -60,6 +60,9 @@ parser.add_argument("--use_visual", type=int, default=1,
                    help="是否使用视觉特征 (0/1)")
 parser.add_argument("--cache_dir", type=str, default="features",
                    help="特征缓存目录")
+parser.add_argument("--cot_cache_dir", type=str, default="cot_cache",
+                   help="CoT特征缓存目录")
+
 
 # GPU选择参数
 parser.add_argument("--gpu_id", type=str, default="0",
@@ -100,6 +103,7 @@ if __name__ == "__main__":
     print(f"  使用CoT: {args.use_cot}")
     print(f"  视觉模型: {args.mllm_name}")
     print(f"  特征缓存目录: {args.cache_dir}")
+    print(f"  CoT缓存目录: {args.cot_cache_dir}")
     print("=" * 60)
     
     # 创建日志目录

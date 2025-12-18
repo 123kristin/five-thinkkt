@@ -12,6 +12,17 @@ DATASET_LANGUAGE = {
     'NIPS_task34': 'en'
 }
 
+def get_dataset_language(dataset_name: Optional[str]) -> str:
+    """获取数据集对应的语言（大小写不敏感）"""
+    if not dataset_name:
+        return 'zh'
+    
+    # 大小写不敏感查找
+    for key, lang in DATASET_LANGUAGE.items():
+        if key.lower() == dataset_name.lower():
+            return lang
+            
+    return 'zh'  # 默认中文
 
 def build_cot_prompt(
     history_qids: List[int],
@@ -41,10 +52,7 @@ def build_cot_prompt(
     """
     # 检测语言
     if language is None:
-        if dataset_name:
-            language = DATASET_LANGUAGE.get(dataset_name, 'zh')  # 默认中文
-        else:
-            language = 'zh'  # 默认中文
+        language = get_dataset_language(dataset_name)
     
     # 根据语言选择模板
     if language == 'en':
