@@ -31,7 +31,8 @@ python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7,8,9,10,
 python run_all_thinkkt_experiments.py --gpu_id "1" --experiment_range "7"
 # 终端3：运行实验 3,7,11,15 (GPU 2)
 python run_all_thinkkt_experiments.py --gpu_id "2" --experiment_range "13,14,15,16,17,18"
-python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version --dataset_name nips_task34
+python wandb_thinkkt_train.py --gpu_id "0" --seq_model_type transformer --num_transformer_layers 2 --save_dir saved_model/baseline_version_input --dataset_name nips_task34
+python wandb_predict.py --save_dir saved_model/baseline_version_input/nips_task34_0_0.0001_32_thinkkt_qkcs_1024_384_512_0.1_transformer_2_8_2_False_True_features_cot_cache --gpu_id "0"
 python run_all_thinkkt_experiments.py --gpu_id "2" --experiment_range "13"
 ```
 thinkkt模型CoT版本

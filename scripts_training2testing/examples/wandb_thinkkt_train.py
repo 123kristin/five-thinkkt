@@ -62,6 +62,8 @@ parser.add_argument("--cache_dir", type=str, default="features",
                    help="特征缓存目录")
 parser.add_argument("--cot_cache_dir", type=str, default="cot_cache",
                    help="CoT特征缓存目录")
+parser.add_argument("--cot_threshold", type=int, default=2,
+                   help="CoT生成阈值：知识点在历史中出现次数少于此值时才生成CoT")
 
 
 # GPU选择参数

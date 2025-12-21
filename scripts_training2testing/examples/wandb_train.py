@@ -80,7 +80,7 @@ def main(params):
             params_for_str['gen_kc_emb_file'] = os.path.splitext(os.path.basename(params_for_str['gen_kc_emb_file']))[0]
         else:
             params_for_str['gen_kc_emb_file'] = 'none'
-    params_str = "_".join( [str(v) for k,v in params_for_str.items() if k not in ['seed', 'save_dir', 'add_uuid', 'other_config', 'emb_path', 'gen_emb_path', 'difficulty_path', 'gen_kc_emb_file', 'use_wandb', 'num_epochs', 'gpu_id', 'mllm_name']] )
+    params_str = "_".join( [str(v) for k,v in params_for_str.items() if k not in ['seed', 'save_dir', 'add_uuid', 'other_config', 'emb_path', 'gen_emb_path', 'difficulty_path', 'gen_kc_emb_file', 'use_wandb', 'num_epochs', 'gpu_id', 'mllm_name', 'cot_cache_dir', 'cache_dir']] )
     print(f"params: {params}, params_str: {params_str}")
     if params['add_uuid'] == 1 and params['use_wandb'] == 1:
         params_str = params_str+f"_{ datetime.now().strftime('%Y%m%d_%H%M%S_%f') }"

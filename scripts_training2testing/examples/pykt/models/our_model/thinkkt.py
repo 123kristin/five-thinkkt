@@ -190,6 +190,7 @@ class ThinkKT(nn.Module):
         self.d_cot = config.get('d_cot', 384)
         self.use_cot = config.get('use_cot', False)  # 初始版本先不使用CoT
         self.use_visual = config.get('use_visual', True)
+        self.cot_threshold = config.get('cot_threshold', 2)
         
         # 初始化多模态编码器
         if self.use_visual:
@@ -337,10 +338,49 @@ class ThinkKT(nn.Module):
         
         for b in range(batch_size):
             batch_cot_embeds = []
+            # 知识点频次统计（用于稀疏 CoT 生成）
+            kc_counts = {}
             for s in range(seq_len):
                 qid = int(qids_cpu[b, s])
                 processed_items += 1
                 
+                # 获取知识点信息
+                history_kcs = None
+                current_kcs = None
+                current_kc_ids = []  # 仅保存ID列表用于统计
+                
+                if cseqs is not None:
+                    cseqs_cpu = cseqs.cpu().numpy()
+                    history_kcs = [[int(cseqs_cpu[b, i, j]) for j in range(cseqs.shape[2]) 
+                                   if cseqs_cpu[b, i, j] >= 0] for i in range(s)]
+                    current_kcs = [int(cseqs_cpu[b, s, j]) for j in range(cseqs.shape[2]) 
+                                  if cseqs_cpu[b, s, j] >= 0]
+                    current_kc_ids = current_kcs
+                
+                # --- 稀疏 CoT 策略 ---
+                # 检查当前知识点是否为"生疏"（在历史中出现少于阈值次）
+                threshold = self.cot_threshold
+                is_novel = False
+                
+                if not current_kc_ids:
+                    # 如果没有知识点信息，默认视为生疏，需要生成
+                    is_novel = True
+                else:
+                    for kc in current_kc_ids:
+                        if kc_counts.get(kc, 0) < threshold:
+                            is_novel = True
+                            break
+                
+                # 更新频次
+                for kc in current_kc_ids:
+                    kc_counts[kc] = kc_counts.get(kc, 0) + 1
+                
+                # 如果是熟练知识点，跳过 CoT 生成
+                if not is_novel:
+                    batch_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                    continue
+                # ---------------------
+
                 # 获取历史交互
                 history_qids = [int(qids_cpu[b, i]) for i in range(s)]
                 history_rs = [int(rseqs_cpu[b, i]) for i in range(s)]
@@ -355,16 +395,6 @@ class ThinkKT(nn.Module):
                         print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count}", end='\r')
                         sys.stdout.flush()
                     continue
-                
-                # 获取知识点信息
-                history_kcs = None
-                current_kcs = None
-                if cseqs is not None:
-                    cseqs_cpu = cseqs.cpu().numpy()
-                    history_kcs = [[int(cseqs_cpu[b, i, j]) for j in range(cseqs.shape[2]) 
-                                   if cseqs_cpu[b, i, j] >= 0] for i in range(s)]
-                    current_kcs = [int(cseqs_cpu[b, s, j]) for j in range(cseqs.shape[2]) 
-                                  if cseqs_cpu[b, s, j] >= 0]
                 
                 # 生成 CoT
                 try:
