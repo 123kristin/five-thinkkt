@@ -366,7 +366,7 @@ class ThinkKT(nn.Module):
         processed_items = 0
         cached_count = 0
         generated_count = 0
-        
+        total_items = batch_size * seq_len
         # 转换为 list 以便处理
         qseqs_list = qseqs.cpu().tolist()
         rseqs_list = rseqs.cpu().tolist()
