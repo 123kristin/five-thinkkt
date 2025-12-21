@@ -386,8 +386,8 @@ class ThinkKT(nn.Module):
             seq_cot_embeds = []
             
             for j in range(seq_len):
-                current_qid = qseqs_list[i][j]
-                if current_qid == 0: # Padding
+                qid = qseqs_list[i][j]
+                if qid == 0: # Padding
                     seq_cot_embeds.append(torch.zeros(self.d_cot).to(device))
                     # Update history for next step, but don't process padding
                     if j > 0: # Only add to history if not the first element and not padding
@@ -451,10 +451,6 @@ class ThinkKT(nn.Module):
                         if min_count < self.cot_threshold: should_generate = True
                 # -------------------
                 
-                # 更新频次
-                # 获取历史交互
-                history_qids = [int(qids_cpu[b, i]) for i in range(s)]
-                history_rs = [int(rseqs_cpu[b, i]) for i in range(s)]
                 
                 # 获取当前题目图片路径
                 if qid in self.img_path_dict:
