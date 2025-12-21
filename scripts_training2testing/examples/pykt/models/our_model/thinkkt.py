@@ -190,7 +190,7 @@ class ThinkKT(nn.Module):
         self.d_cot = config.get('d_cot', 384)
         self.use_cot = config.get('use_cot', False)  # 初始版本先不使用CoT
         self.use_visual = config.get('use_visual', True)
-        self.dataset_name = data_config.get('dpath', '').split('/')[-1] # 从路径获取 dataset name
+        self.dataset_name = model_config.get('dataset_name', data_config.get('dpath', '').split('/')[-1]) # 优先从model_config获取准确的dataset_name
         
         # CoT配置
         # --- 新增配置 ---
@@ -328,9 +328,12 @@ class ThinkKT(nn.Module):
     
     def _get_cot_embeddings(
         self,
-        qids: torch.Tensor,
+        qseqs: torch.Tensor,
         rseqs: torch.Tensor,
-        cseqs: Optional[torch.Tensor] = None
+        cseqs: Optional[torch.Tensor] = None,
+        img_path_dict=None,
+        kc_vocab=None,
+        v_feat=None
     ) -> Optional[torch.Tensor]:
         """
         获取CoT嵌入
