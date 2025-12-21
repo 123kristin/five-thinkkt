@@ -457,7 +457,7 @@ class ThinkKT(nn.Module):
                     img_path = self.img_path_dict[qid]
                 else:
                     # 如果找不到路径，返回零向量
-                    batch_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                    seq_cot_embeds.append(torch.zeros(self.d_cot, device=device))
                     if processed_items % 10 == 0:
                         print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count}", end='\r')
                         sys.stdout.flush()
@@ -484,7 +484,7 @@ class ThinkKT(nn.Module):
                     else:
                         generated_count += 1
                     
-                    batch_cot_embeds.append(cot_embed.to(device))
+                    seq_cot_embeds.append(cot_embed.to(device))
                     
                     # 每10个或每生成一个非缓存的CoT时输出进度
                     if processed_items % 10 == 0 or not from_cache:
@@ -494,9 +494,9 @@ class ThinkKT(nn.Module):
                 except Exception as e:
                     print(f"\n[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}, batch={i}, seq={j}): {e}")
                     sys.stdout.flush()
-                    batch_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                    seq_cot_embeds.append(torch.zeros(self.d_cot, device=device))
             
-            cot_embeds.append(torch.stack(batch_cot_embeds))
+            cot_embeds.append(torch.stack(seq_cot_embeds))
         
         print(f"\n[ThinkKT] CoT生成完成: 总计 {processed_items} 个，缓存: {cached_count}，新生成: {generated_count}")
         sys.stdout.flush()
