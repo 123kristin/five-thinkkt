@@ -475,7 +475,7 @@ class ThinkKT(nn.Module):
                         current_qid=qid,
                         img_path=img_path,
                         kc_vocab=self.kc_vocab,
-                        history_kcs=history_kcs,
+                        history_kcs=history_kcs_list,
                         current_kcs=current_kcs
                     )
                     
@@ -492,7 +492,7 @@ class ThinkKT(nn.Module):
                         sys.stdout.flush()
                         
                 except Exception as e:
-                    print(f"\n[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}, batch={b}, seq={s}): {e}")
+                    print(f"\n[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}, batch={i}, seq={j}): {e}")
                     sys.stdout.flush()
                     batch_cot_embeds.append(torch.zeros(self.d_cot, device=device))
             
