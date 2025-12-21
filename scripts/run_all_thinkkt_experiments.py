@@ -98,6 +98,7 @@ def main():
     parser.add_argument("--pretrained_model_dir", type=str, default=None,
                         help="预训练模型目录(用于learnable模式跳过Step1)")
                         
+    parser.add_argument("--num_epochs", type=int, default=200, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
     parser.add_argument("--skip_training", action="store_true", 
                        help="跳过训练，只运行测试（用于重新测试已训练的模型）")
