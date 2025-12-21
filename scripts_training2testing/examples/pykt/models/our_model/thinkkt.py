@@ -190,7 +190,7 @@ class ThinkKT(nn.Module):
         self.d_cot = config.get('d_cot', 384)
         self.use_cot = config.get('use_cot', False)  # 初始版本先不使用CoT
         self.use_visual = config.get('use_visual', True)
-        self.dataset_name = model_config.get('dataset_name', data_config.get('dpath', '').split('/')[-1]) # 优先从model_config获取准确的dataset_name
+        self.dataset_name = config.get('dataset_name', data_config.get('dpath', '').split('/')[-1]) # 优先从config获取准确的dataset_name
         
         # CoT配置
         # --- 新增配置 ---
