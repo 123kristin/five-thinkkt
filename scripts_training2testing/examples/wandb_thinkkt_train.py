@@ -64,6 +64,8 @@ parser.add_argument("--cot_cache_dir", type=str, default="cot_cache",
                    help="CoT特征缓存目录")
 parser.add_argument("--cot_threshold", type=int, default=2,
                    help="CoT生成阈值：知识点在历史中出现次数少于此值时才生成CoT")
+parser.add_argument("--adaptive_strategy", type=str, default="rule", choices=["rule", "learnable"],
+                   help="CoT生成策略: 'rule' (基于阈值) 或 'learnable' (RL网络)")
 
 
 # GPU选择参数

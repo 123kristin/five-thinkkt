@@ -91,7 +91,14 @@ def main():
     parser.add_argument("--fold", type=int, default=0, help="交叉验证折数")
     parser.add_argument("--use_cot", type=int, default=0, 
                        help="是否使用CoT (0=Baseline, 1=CoT版本)")
-    parser.add_argument("--num_epochs", type=int, default=200, help="训练轮数")
+    parser.add_argument("--cot_threshold", type=int, default=2,
+                        help="CoT生成的稀疏阈值")
+    parser.add_argument("--adaptive_strategy", type=str, default="rule", 
+                        help="CoT生成策略: 'rule' 或 'learnable'")
+    parser.add_argument("--pretrained_model_dir", type=str, default=None,
+                        help="预训练模型目录(用于learnable模式跳过Step1)")
+                        
+    args = parser.parse_args()
     parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
     parser.add_argument("--skip_training", action="store_true", 
                        help="跳过训练，只运行测试（用于重新测试已训练的模型）")
@@ -320,8 +327,35 @@ def main():
         actual_model_dir = None  # 记录实际模型保存路径
         train_start_time = None  # 记录训练开始时间
         
-        # 1. 训练
-        if not args.skip_training:
+        # 1. 训练 (Phase 1: Base Model)
+        run_phase1 = not args.skip_training
+        actual_model_dir = None
+        
+        # 智能跳过逻辑: 如果是 Learnable 模式，且能找到已存在的基线模型，则跳过 Phase 1
+        if args.adaptive_strategy == 'learnable':
+            # 搜索最近的一个可用模型目录
+            if os.path.exists(save_dir):
+                subdirs = [os.path.join(save_dir, d) for d in os.listdir(save_dir) if os.path.isdir(os.path.join(save_dir, d))]
+                # 按修改时间排序，找最新的
+                subdirs.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+                
+                for d in subdirs:
+                    if os.path.exists(os.path.join(d, "config.json")):  # 检查配置是否存在，这是最基本的
+                        
+                        # 额外检查: 确保这个模型不是 RL 训练出来的 (rl_model.pt) 而是 Base 模型
+                        # 但通常 wandb_train 生成的目录里会有 config.json
+                        print(f"🔄 [Auto-Skip] 发现已有基线模型，跳过 Phase 1，直接进入 RL 训练: {d}")
+                        actual_model_dir = d
+                        run_phase1 = False
+                        break
+        
+        # 如果用户手动指定了预训练模型 (覆盖自动搜索)
+        if args.pretrained_model_dir:
+             print(f"🔄 [Manual-Skip] 使用指定基线模型: {args.pretrained_model_dir}")
+             actual_model_dir = args.pretrained_model_dir
+             run_phase1 = False
+
+        if run_phase1:
             train_start_time = datetime.now()  # 记录训练开始时间
             train_cmd = [
                 "python", "wandb_thinkkt_train.py",
@@ -333,7 +367,9 @@ def main():
                 "--save_dir", save_dir,
                 "--num_epochs", str(args.num_epochs),
                 "--batch_size", str(args.batch_size),
-                "--gpu_id", assigned_gpu  # 使用轮询分配的GPU
+                "--gpu_id", assigned_gpu,  # 使用轮询分配的GPU
+                "--cot_threshold", str(args.cot_threshold),
+                "--adaptive_strategy", args.adaptive_strategy
             ]
             
             if exp['num_transformer_layers'] is not None:
@@ -354,6 +390,43 @@ def main():
                 continue
             
             # 训练完成后，从日志中提取实际保存路径
+            # 我们需要解析日志文件来找到 "最佳模型保存在: ..." 的行，或者直接根据规则推断
+            # 为了简单，我们让 wandb_thinkkt_train.py 最后打印一行特殊标记，例如 [RESULT_DIR]: /path/to/dir
+            # 或者我们直接根据 save_dir 和 exp_name 猜测
+            
+            # 这里尝试简单推断: save_dir/cot_version_input/dataset_model_layer
+            # 但 wandb_train.py 会添加 uuid, 所以最好是从日志读
+            if args.adaptive_strategy == 'learnable':
+                # 读取日志寻找路径
+                if os.path.exists(exp_log):
+                    with open(exp_log, 'r') as f:
+                        for line in f:
+                            if "模型目录:" in line: # wandb_train.py 需要打印这个
+                                actual_model_dir = line.split(":")[-1].strip()
+                                break
+                                
+                if not actual_model_dir:
+                    print(f"⚠️ 无法找到预训练模型路径，跳过RL训练")
+                else:
+                    print(f"🔄 检测到 learnable 策略，开始 RL 训练...")
+                    print(f"   基础模型路径: {actual_model_dir}")
+                    
+                    rl_log = os.path.join(save_dir, f"rl_train_{exp_name}.log")
+                    rl_cmd = [
+                        "python", "scripts/train_rl.py",
+                        "--dataset_name", exp['dataset'],
+                        "--kt_model_path", actual_model_dir,
+                        "--fold", str(args.fold),
+                        "--gpu_id", assigned_gpu,
+                        "--lambda_cost", "0.1" # 默认值
+                    ]
+                    
+                    success_rl = run_command(rl_cmd, f"RL训练: {exp_name}", log_file=rl_log)
+                    if success_rl:
+                        print(f"✅ RL训练完成")
+                    else:
+                        print(f"❌ RL训练失败")
+            
             if os.path.exists(exp_log):
                 with open(exp_log, 'r', encoding='utf-8') as f:
                     log_lines = f.readlines()

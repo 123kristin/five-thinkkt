@@ -190,7 +190,16 @@ class ThinkKT(nn.Module):
         self.d_cot = config.get('d_cot', 384)
         self.use_cot = config.get('use_cot', False)  # 初始版本先不使用CoT
         self.use_visual = config.get('use_visual', True)
-        self.cot_threshold = config.get('cot_threshold', 2)
+        self.dataset_name = data_config.get('dpath', '').split('/')[-1] # 从路径获取 dataset name
+        
+        # CoT配置
+        # --- 新增配置 ---
+        self.cot_threshold = config.get('cot_threshold', 2) # 稀疏策略阈值
+        self.adaptive_strategy = config.get('adaptive_strategy', 'rule') # 策略模式: 'rule' (规则) 或 'learnable' (RL网络)
+        print(f"[ThinkKT] Adaptive Strategy: {self.adaptive_strategy}")
+        if self.adaptive_strategy == 'rule':
+            print(f"[ThinkKT] Using Rule-based Threshold: {self.cot_threshold}")
+        # ----------------
         
         # 初始化多模态编码器
         if self.use_visual:
@@ -259,6 +268,25 @@ class ThinkKT(nn.Module):
         print(f"[ThinkKT] 正在初始化知识状态追踪器...")
         self.kt_net = ThinkKTNet(kt_config)
         
+        # --- Meta-Controller (RL Policy Network) ---
+        # 输入: 状态特征 (d_question + d_knowledge + stat_features)
+        # 这里为了简化，我们假设状态由题目特征和当前知识状态组成
+        # 实际输入维度需要根据 _get_policy_state 方法的输出决定
+        # 暂时设定输入维度为 d_question + d_knowledge + 1 (频次特征)
+        self.d_policy_state = self.d_question + config.get('d_knowledge', 512) + 1
+        
+        self.meta_policy_net = nn.Sequential(
+            nn.Linear(self.d_policy_state, 128),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+            nn.Sigmoid()  # 输出生成概率 P(Action=1)
+        )
+        print(f"[ThinkKT] Meta-Controller 初始化完成")
+        # -------------------------------------------
+
         # 为了兼容 train_model.py 中的 model.model.train() 调用
         # 将 kt_net 也赋值给 model 属性
         self.model = self.kt_net
@@ -311,6 +339,9 @@ class ThinkKT(nn.Module):
             qids: 问题ID张量 (batch_size, seq_len)
             rseqs: 答题结果张量 (batch_size, seq_len)
             cseqs: 知识点序列 (batch_size, seq_len, max_concepts) 可选
+            img_path_dict: 问题ID到图片路径的映射
+            kc_vocab: 知识点词表
+            v_feat: (batch, seq_len, d_question) 题目视觉特征，若为 None 则内部暂无法使用策略网络(除非再次计算)
             
         Returns:
             r_embed: CoT嵌入 (batch_size, seq_len, d_cot) 或 None
@@ -318,69 +349,106 @@ class ThinkKT(nn.Module):
         if not self.use_cot or self.cot_generator is None:
             return None
         
-        batch_size, seq_len = qids.shape
-        device = qids.device
+        batch_size, seq_len = qseqs.shape
+        device = qseqs.device
         
-        # 将qids移到CPU进行路径查找
-        qids_cpu = qids.cpu().numpy()
-        rseqs_cpu = rseqs.cpu().numpy()
-        
-        # 批量生成 CoT 嵌入
         cot_embeds = []
-        total_items = batch_size * seq_len
+        
+        # 维护知识点频次 (batch_level)
+        # map: batch_idx -> {kc: count}
+        from collections import defaultdict
+        kc_counts_map = [defaultdict(int) for _ in range(batch_size)]
+        
+        # 统计 Counters
         processed_items = 0
         cached_count = 0
         generated_count = 0
         
-        print(f"[ThinkKT] 开始生成CoT嵌入: batch_size={batch_size}, seq_len={seq_len}, 总计 {total_items} 个")
+        # 转换为 list 以便处理
+        qseqs_list = qseqs.cpu().tolist()
+        rseqs_list = rseqs.cpu().tolist()
+        if cseqs is not None:
+            cseqs_list = cseqs.cpu().tolist()
+        
+        print(f"[ThinkKT] Generating CoT (Strategy={self.adaptive_strategy})...")
         import sys
         sys.stdout.flush()
         
-        for b in range(batch_size):
-            batch_cot_embeds = []
-            # 知识点频次统计（用于稀疏 CoT 生成）
-            kc_counts = {}
-            for s in range(seq_len):
-                qid = int(qids_cpu[b, s])
+        for i in range(batch_size):
+            history_qids = []
+            history_rs = []
+            history_kcs_list = [] # List of lists for history
+            
+            # 序列当前步的 CoT 列表
+            seq_cot_embeds = []
+            
+            for j in range(seq_len):
+                current_qid = qseqs_list[i][j]
+                if current_qid == 0: # Padding
+                    seq_cot_embeds.append(torch.zeros(self.d_cot).to(device))
+                    # Update history for next step, but don't process padding
+                    if j > 0: # Only add to history if not the first element and not padding
+                        history_qids.append(qseqs_list[i][j-1])
+                        history_rs.append(rseqs_list[i][j-1])
+                        if cseqs is not None:
+                            prev_kcs = [k for k in cseqs_list[i][j-1] if k != -1]
+                            history_kcs_list.append(prev_kcs)
+                    continue
+                    
                 processed_items += 1
                 
-                # 获取知识点信息
-                history_kcs = None
-                current_kcs = None
-                current_kc_ids = []  # 仅保存ID列表用于统计
-                
+                # 获取知识点
+                current_kcs = []
                 if cseqs is not None:
-                    cseqs_cpu = cseqs.cpu().numpy()
-                    history_kcs = [[int(cseqs_cpu[b, i, j]) for j in range(cseqs.shape[2]) 
-                                   if cseqs_cpu[b, i, j] >= 0] for i in range(s)]
-                    current_kcs = [int(cseqs_cpu[b, s, j]) for j in range(cseqs.shape[2]) 
-                                  if cseqs_cpu[b, s, j] >= 0]
-                    current_kc_ids = current_kcs
+                    # 假设 cseqs: [batch, seq_len, max_concepts]
+                    # 我们过滤掉 -1 padding
+                    for k in cseqs_list[i][j]:
+                        if k != -1:
+                            current_kcs.append(k)
                 
-                # --- 稀疏 CoT 策略 ---
-                # 检查当前知识点是否为"生疏"（在历史中出现少于阈值次）
-                threshold = self.cot_threshold
-                is_novel = False
+                # --- 核心决策逻辑 ---
+                should_generate = False
                 
-                if not current_kc_ids:
-                    # 如果没有知识点信息，默认视为生疏，需要生成
-                    is_novel = True
-                else:
-                    for kc in current_kc_ids:
-                        if kc_counts.get(kc, 0) < threshold:
-                            is_novel = True
-                            break
+                # 1. 计算频次状态
+                # 这里简单取第一个知识点作为代表，或者取最大频次
+                min_count = 9999
+                if current_kcs:
+                    for k in current_kcs:
+                        c = kc_counts_map[i][k]
+                        if c < min_count: min_count = c
+                else: # If no KCs, treat as novel
+                    min_count = 0
+                
+                # 2. 策略分支
+                if self.adaptive_strategy == 'rule':
+                    # 规则模式: 频次小于阈值则生成
+                    if min_count < self.cot_threshold:
+                        should_generate = True
+                        
+                elif self.adaptive_strategy == 'learnable':
+                    # RL 模式: 使用 Policy Network 判断
+                    # 注意: 为了推理时能用，我们需要 v_t。
+                    # 如果 v_feat 传进来了，就用；否则暂时降级为 Rule (防止报错)
+                    if v_feat is not None:
+                        # 构造 Input
+                        v_t_current = v_feat[i, j].unsqueeze(0) # (1, d_question)
+                        # h_t is the knowledge state *before* processing current item.
+                        # For now, we use a dummy zero vector for h_prev as it's not readily available here.
+                        # A more sophisticated approach would require passing h_t from KTNet.
+                        h_dummy = torch.zeros(1, self.kt_net.d_knowledge).to(device) 
+                        cnt_tsr = torch.tensor([[min_count]], dtype=torch.float).to(device)
+                        
+                        # Forward Policy
+                        # 只需要概率，不需要采样 (推理时使用 Greedy 或 Threshold 0.5)
+                        _, _, prob = self.forward_policy(v_t_current, h_dummy, cnt_tsr)
+                        if prob.item() > 0.5:
+                            should_generate = True
+                    else:
+                        # Fallback to rule-based if v_feat is not provided for learnable strategy
+                        if min_count < self.cot_threshold: should_generate = True
+                # -------------------
                 
                 # 更新频次
-                for kc in current_kc_ids:
-                    kc_counts[kc] = kc_counts.get(kc, 0) + 1
-                
-                # 如果是熟练知识点，跳过 CoT 生成
-                if not is_novel:
-                    batch_cot_embeds.append(torch.zeros(self.d_cot, device=device))
-                    continue
-                # ---------------------
-
                 # 获取历史交互
                 history_qids = [int(qids_cpu[b, i]) for i in range(s)]
                 history_rs = [int(rseqs_cpu[b, i]) for i in range(s)]
@@ -437,6 +505,39 @@ class ThinkKT(nn.Module):
         # 堆叠为 (batch_size, seq_len, d_cot)
         r_embed = torch.stack(cot_embeds)
         return r_embed
+
+    def _get_policy_state(self, v_t, h_prev, kc_counts_feature):
+        """
+        构建策略网络的输入状态
+        Args:
+            v_t: 题目特征 (batch, d_question)
+            h_prev: 上一时刻的隐状态 (batch, d_knowledge)
+            kc_counts_feature: 知识点频次特征 (batch, 1)
+        Returns:
+            state: (batch, d_policy_state)
+        """
+        return torch.cat([v_t, h_prev, kc_counts_feature], dim=-1)
+
+    def forward_policy(self, v_t, h_prev, kc_counts):
+        """
+        前向传播策略网络
+        Returns:
+            action: (batch, 1) 采样动作 {0, 1}
+            log_prob: (batch, 1) 动作的对数概率
+            action_prob: (batch, 1) 生成概率 P(action=1)
+        """
+        # 归一化频次特征
+        counts_feat = (kc_counts / 10.0).unsqueeze(-1)  # 简单归一化
+        
+        state = self._get_policy_state(v_t, h_prev, counts_feat)
+        prob = self.meta_policy_net(state)
+        
+        # 采样动作
+        m = torch.distributions.Bernoulli(prob)
+        action = m.sample()
+        log_prob = m.log_prob(action)
+        
+        return action, log_prob, prob
     
     def train_one_step(self, data: dict) -> tuple:
         """
@@ -487,7 +588,7 @@ class ThinkKT(nn.Module):
             cseqs = cseqs.to(self.device)
         
         # 获取CoT嵌入
-        r_embed = self._get_cot_embeddings(qseqs, rseqs, cseqs)
+        r_embed = self._get_cot_embeddings(qseqs, rseqs, cseqs, img_path_dict=None, kc_vocab=None, v_feat=v_t)
         
         # 前向传播
         y = self.kt_net(
@@ -502,6 +603,97 @@ class ThinkKT(nn.Module):
         loss = self.get_loss(y, shft_rseqs, smasks)
         
         return y, loss
+
+    def forward_rl(self, data: dict):
+        """
+        适用于强化学习训练的前向传播
+        支持逐步决策和梯度流
+        Returns:
+            predictions: (batch, seq_len)
+            actions: (batch, seq_len)
+            log_probs: (batch, seq_len)
+        """
+        # 解包数据
+        qseqs = data['qseqs']  # (batch, seq_len)
+        rseqs = data['rseqs']
+        cseqs = data['cseqs']
+        batch_size, seq_len = qseqs.shape
+        device = qseqs.device
+        
+        # 1. 获取题目特征 (batch, seq_len, d_question)
+        v, k = self._get_question_features(qseqs, seq_len)
+        
+        # 2. 初始化 KT 隐状态
+        h_t = self.kt_net.init_hidden(batch_size).to(device) # 需要确保 ThinkKTNet 有这个方法
+        
+        predictions_list = []
+        actions_list = []
+        log_probs_list = []
+        
+        # 维护知识点频次
+        kc_counts_map = [defaultdict(int) for _ in range(batch_size)]
+        
+        # 3. 逐步循环
+        for t in range(seq_len):
+            # 当前时刻输入
+            v_t = v[:, t, :] # (batch, d_question)
+            r_prev = torch.zeros(batch_size, dtype=torch.long).to(device) if t == 0 else rseqs[:, t-1]
+            q_t_id = qseqs[:, t]
+            
+            # --- 准备策略状态 ---
+            # 计算当前题目主要知识点的频次
+            current_counts = []
+            for b in range(batch_size):
+                # 获取当前题目的主要知识点（取第一个作为代表，或取平均）
+                # 这里简化：假设cseqs[:,:,0]是主要知识点
+                kc = int(cseqs[b, t, 0].item()) if cseqs is not None else -1
+                cnt = kc_counts_map[b][kc]
+                current_counts.append(cnt)
+                kc_counts_map[b][kc] += 1
+            
+            kc_counts_tensor = torch.tensor(current_counts, dtype=torch.float, device=device).unsqueeze(1) # (batch, 1)
+            
+            # --- Meta-Controller 决策 ---
+            # 注意：这里需要 h_t，假设 h_t 是 (batch, d_knowledge)
+            # 如果是 LSTM 的 h_t 是 tuple，需要处理
+            if isinstance(h_t, tuple):
+                 h_prev_Rep = h_t[0][-1] # 取最后一层的隐藏状态
+            else:
+                 h_prev_Rep = h_t
+                 
+            action_t, log_prob_t, _ = self.forward_policy(v_t, h_prev_Rep, kc_counts_tensor)
+            
+            actions_list.append(action_t)
+            log_probs_list.append(log_prob_t)
+            
+            # --- 执行 CoT (Action=1) 或 Skip (Action=0) ---
+            # 注意：实际生成文本很慢，RL训练时我们通常预计算好或者使用缓存
+            # 这里为了演示完整流，我们根据 action 选择
+            
+            # 由于这是必须要梯度的过程，我们不能直接调用 _get_cot_embeddings (它不传梯度)
+            # 简化方案：RL阶段只训练 Policy，冻结 Generator 和 KT
+            # 因此我们在此处只需要获取 CoT embedding
+            
+            # *关键*: 我们需要能根据 action 动态获得 embedding
+            # 暂时用一个 placeholder 函数，实际需要根据 dataset 获取
+            # 为了跑通流程，这里先调用 _get_cot_embeddings 的改进版（需修改），或者在此处手动构建
+            
+            # 临时：构造一个伪 CoT 向量 (如果 action=1)
+            # 真实场景：调用 self.cot_generator.generate_cot_embedding_only(...)
+            cot_embed_t = torch.zeros(batch_size, self.d_model, device=device) # 假设 d_model = d_cot
+            
+            # 如果 action=1，且有预计算的 CoT，则填入
+            # 这里留空给后续对接
+            
+            # --- KT 更新 ---
+            # 调用 KT Net 的单步 forward
+            # y_t, h_next = self.kt_net.forward_step(v_t, r_prev, cot_embed_t, h_t) 
+            # 假设 ThinkKTNet 还没有 forward_step，需要增加
+            
+            # 为了不报错，先占位
+            predictions_list.append(torch.zeros(batch_size, 1, device=device)) 
+            
+        return torch.stack(predictions_list, dim=1), torch.stack(actions_list, dim=1), torch.stack(log_probs_list, dim=1)
     
     def predict_one_step(self, data: dict) -> torch.Tensor:
         """
