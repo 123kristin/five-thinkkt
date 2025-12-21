@@ -463,38 +463,47 @@ class ThinkKT(nn.Module):
                         sys.stdout.flush()
                     continue
                 
-                # 生成 CoT
-                try:
-                    # 检查是否在缓存中
-                    cache_key = self.cot_generator._get_cache_key(history_qids, history_rs, qid)
-                    from_cache = cache_key in self.cot_generator.cot_cache
-                    
-                    cot_text, cot_embed = self.cot_generator.generate_cot(
-                        history_qids=history_qids,
-                        history_rs=history_rs,
-                        current_qid=qid,
-                        img_path=img_path,
-                        kc_vocab=self.kc_vocab,
-                        history_kcs=history_kcs_list,
-                        current_kcs=current_kcs
-                    )
-                    
-                    if from_cache:
-                        cached_count += 1
-                    else:
-                        generated_count += 1
-                    
-                    seq_cot_embeds.append(cot_embed.to(device))
-                    
-                    # 每10个或每生成一个非缓存的CoT时输出进度
-                    if processed_items % 10 == 0 or not from_cache:
-                        print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count} | 当前qid={qid}", end='\r')
-                        sys.stdout.flush()
+                # 生成 CoT (仅当策略决定生成时)
+                if should_generate:
+                    try:
+                        # 检查是否在缓存中
+                        cache_key = self.cot_generator._get_cache_key(history_qids, history_rs, qid)
+                        from_cache = cache_key in self.cot_generator.cot_cache
                         
-                except Exception as e:
-                    print(f"\n[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}, batch={i}, seq={j}): {e}")
-                    sys.stdout.flush()
+                        cot_text, cot_embed = self.cot_generator.generate_cot(
+                            history_qids=history_qids,
+                            history_rs=history_rs,
+                            current_qid=qid,
+                            img_path=img_path,
+                            kc_vocab=self.kc_vocab,
+                            history_kcs=history_kcs_list,
+                            current_kcs=current_kcs
+                        )
+                        
+                        if from_cache:
+                            cached_count += 1
+                        else:
+                            generated_count += 1
+                        
+                        seq_cot_embeds.append(cot_embed.to(device))
+                        
+                        # 每10个或每生成一个非缓存的CoT时输出进度
+                        if processed_items % 10 == 0 or not from_cache:
+                            print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count} | 当前qid={qid}", end='\r')
+                            sys.stdout.flush()
+                            
+                    except Exception as e:
+                        print(f"\n[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}, batch={i}, seq={j}): {e}")
+                        sys.stdout.flush()
+                        seq_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                else:
+                    # 策略决定跳过 CoT 生成
                     seq_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                
+                # 更新知识点频次
+                if current_kcs:
+                    for k in current_kcs:
+                        kc_counts_map[i][k] += 1
             
             cot_embeds.append(torch.stack(seq_cot_embeds))
         
