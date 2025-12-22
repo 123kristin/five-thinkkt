@@ -5,17 +5,17 @@ import argparse
 # 先解析参数，设置环境变量
 parser = argparse.ArgumentParser(description="ThinkKT 模型训练入口")
 # dataset config
-parser.add_argument("--dataset_name", type=str, default="XES3G5M",
+parser.add_argument("--dataset_name", type=str, default="DBE_KT22",
                    help="数据集名称: DBE_KT22 或 XES3G5M")
 parser.add_argument("--fold", type=int, default=0,
                    help="交叉验证折数 (0-4)")
 
 # train config
-parser.add_argument("--learning_rate", type=float, default=1e-4,
+parser.add_argument("--learning_rate", type=float, default=1e-3,
                    help="学习率")
 parser.add_argument("--seed", type=int, default=2025,
                    help="随机种子")
-parser.add_argument("--batch_size", type=int, default=32,
+parser.add_argument("--batch_size", type=int, default=64,
                    help="批次大小（ThinkKT使用视觉模型，建议较小batch size）")
 parser.add_argument("--num_epochs", type=int, default=200,
                    help="训练轮数")
@@ -25,7 +25,7 @@ parser.add_argument("--use_wandb", type=int, default=0,
                    help="是否使用wandb记录 (0/1)")
 parser.add_argument("--add_uuid", type=int, default=1,
                    help="是否添加UUID到保存路径 (0/1)")
-parser.add_argument("--save_dir", type=str, default="saved_model/base",
+parser.add_argument("--save_dir", type=str, default="saved_model",
                    help="模型保存目录")
 
 # model config
@@ -39,11 +39,11 @@ parser.add_argument("--d_question", type=int, default=1024,
                    help="题目特征维度")
 parser.add_argument("--d_cot", type=int, default=384,
                    help="CoT嵌入维度（当前未使用）")
-parser.add_argument("--d_knowledge", type=int, default=512,
+parser.add_argument("--d_knowledge", type=int, default=200,
                    help="知识状态维度")
 parser.add_argument("--dropout", type=float, default=0.1,
                    help="Dropout率")
-parser.add_argument("--seq_model_type", type=str, default="transformer",
+parser.add_argument("--seq_model_type", type=str, default="lstm",
                    choices=["transformer", "lstm"],
                    help="序列模型类型: transformer 或 lstm")
 parser.add_argument("--num_transformer_layers", type=int, default=2,
@@ -58,6 +58,8 @@ parser.add_argument("--use_cot", type=int, default=0,
                    help="是否使用CoT (0/1，当前版本为0)")
 parser.add_argument("--use_visual", type=int, default=1,
                    help="是否使用视觉特征 (0/1)")
+parser.add_argument("--question_rep_type", type=str, default="visual", choices=["visual", "qid"],
+                   help="题目表征来源: 'visual' (VLM) 或 'qid' (ID Embedding，完全复刻CRKT)")
 parser.add_argument("--cache_dir", type=str, default="features",
                    help="特征缓存目录")
 parser.add_argument("--cot_cache_dir", type=str, default="cot_cache",

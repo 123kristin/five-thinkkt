@@ -162,6 +162,17 @@ class ThinkKT(nn.Module):
         self.model_name = 'thinkkt'
         self.emb_type = emb_type
         
+        # 题目表征来源
+        self.question_rep_type = config.get('question_rep_type', 'visual') # 'visual' or 'qid'
+        self.num_q = config.get('num_q', 500) # 确保有 num_q
+        self.d_question = config.get('d_question', 1024)
+
+        if self.question_rep_type == 'qid':
+            print(f"[ThinkKT] 使用题目ID表征 (CRKT模式), dimension={self.d_question}")
+            self.QEmbs = nn.Embedding(self.num_q, self.d_question)
+        else:
+             self.QEmbs = None
+        
         # 设备管理（与CRKT一致）
         if torch.cuda.is_available():
             current_gpu_id = os.environ.get('CURRENT_GPU_ID', '0')
@@ -308,6 +319,11 @@ class ThinkKT(nn.Module):
         Returns:
             v_t: 题目特征 (batch_size, seq_len, d_question)
         """
+        # 1. 如果是 QID 模式，直接查表
+        if self.question_rep_type == 'qid' and self.QEmbs is not None:
+            return self.QEmbs(qids.long())
+            
+        # 2. 如果是 Visual 模式
         if not self.use_visual or self.visual_encoder is None:
             # 如果不使用视觉特征，返回零向量
             batch_size = qids.shape[0]
@@ -604,7 +620,8 @@ class ThinkKT(nn.Module):
             c=cseqs,  # 知识点序列
             r=rseqs,  # 使用历史答题结果
             r_embed=r_embed,
-            mask=masks
+            mask=masks,
+            q_shift=shft_qseqs
         )  # (batch, seq_len-1)
         
         # 计算损失
@@ -753,6 +770,9 @@ class ThinkKT(nn.Module):
         
         self.kt_net = self.kt_net.to(device)
         
+        if self.QEmbs is not None:
+            self.QEmbs = self.QEmbs.to(device)
+            
         return self
     
     def save_feature_cache(self):

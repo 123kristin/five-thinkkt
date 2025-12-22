@@ -103,7 +103,8 @@ class ThinkKTNet(nn.Module):
         self.d_knowledge = config.get('d_knowledge', 512)
         self.dropout = config.get('dropout', 0.1)
         self.use_cot = config.get('use_cot', False)
-        self.seq_model_type = config.get('seq_model_type', 'transformer')
+        self.seq_model_type = config.get('seq_model_type', 'lstm') # Default to LSTM to match CRKT
+        self.prediction_mode = config.get('prediction_mode', 'vector') # Default to Vector to match CRKT
         
         # 知识点嵌入维度（与题目特征维度一致，用于知识点平均嵌入）
         self.dim_qc = self.d_question  # 知识点嵌入维度
@@ -152,13 +153,23 @@ class ThinkKTNet(nn.Module):
             raise ValueError(f"不支持的序列模型类型: {self.seq_model_type}")
         
         # 预测头
-        self.predictor = nn.Sequential(
-            nn.Linear(self.d_knowledge, self.d_knowledge // 2),
-            nn.ReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.d_knowledge // 2, 1),
-            nn.Sigmoid()
-        )
+        # 预测头
+        if self.prediction_mode == 'vector':
+            # CRKT风格：全域预测 (Vector Output)
+            # 结构：Dropout -> Linear(dim, num_q) (参考 crkt.py)
+            self.predictor = nn.Sequential(
+                nn.Dropout(self.dropout),
+                nn.Linear(self.d_knowledge, config.get('num_q', 500)) # 使用传入的num_q
+            )
+        else:
+            # ThinkKT风格：单点预测 (Scalar Output)
+            self.predictor = nn.Sequential(
+                nn.Linear(self.d_knowledge, self.d_knowledge // 2),
+                nn.ReLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.d_knowledge // 2, 1),
+                nn.Sigmoid()
+            )
         
         # 知识点掌握度输出（可选，用于可解释性）
         self.kc_mastery_head = nn.Sequential(
@@ -206,6 +217,7 @@ class ThinkKTNet(nn.Module):
         r: torch.Tensor,
         r_embed: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
+        q_shift: Optional[torch.Tensor] = None, # 新增：用于 Vector 模式下的选择
         return_kc_mastery: bool = False
     ) -> torch.Tensor:
         """
@@ -286,7 +298,26 @@ class ThinkKTNet(nn.Module):
                 h_t, _ = self.seq_model(z)
         
         # 4. 预测
-        y_pred = self.predictor(h_t).squeeze(-1)  # (batch_size, seq_len)
+        # 4. 预测
+        if self.prediction_mode == 'vector':
+            # vector模式：预测所有题目的得分，然后根据q_shift选择
+            q_scores = self.predictor(h_t) # (batch, seq, num_q)
+            q_scores = torch.sigmoid(q_scores)
+            
+            if q_shift is not None:
+                # 类似 CRKT 的 gather 操作
+                # q_shift: (batch, seq)
+                # F.one_hot dim needs to match q_scores last dim
+                # output: (batch, seq)
+                num_q = q_scores.size(-1)
+                y_pred = (q_scores * F.one_hot(q_shift.long(), num_q)).sum(-1)
+            else:
+                # 如果没有提供 q_shift（例如推理时？），暂时不支持或默认行为
+                # 或者返回 max/mean? 这里为了安全抛出错误或返回 scalar 形式的所有
+                raise ValueError("In 'vector' prediction_mode, q_shift must be provided to forward().")
+        else:
+            # scalar模式
+            y_pred = self.predictor(h_t).squeeze(-1)  # (batch_size, seq_len)
         
         if return_kc_mastery:
             kc_mastery = self.kc_mastery_head(h_t)  # (batch_size, seq_len, num_c)
