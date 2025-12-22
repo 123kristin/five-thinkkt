@@ -97,6 +97,8 @@ def main():
                         help="CoT生成策略: 'rule' 或 'learnable'")
     parser.add_argument("--pretrained_model_dir", type=str, default=None,
                         help="预训练模型目录(用于learnable模式跳过Step1)")
+    parser.add_argument("--question_rep_type", type=str, default="visual", choices=["visual", "qid"],
+                        help="题目表征来源: 'visual' (ThinkKT) 或 'qid' (CRKT)")
                         
     parser.add_argument("--num_epochs", type=int, default=200, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
@@ -144,26 +146,22 @@ def main():
     skipped_experiments = []  # 跳过的已完成实验
     failed_experiments = []
     
-    # 生成所有实验组合
+    datasets = ["DBE_KT22", "XES3G5M", "nips_task34"]
+    question_rep_types = ["qid", "visual"]
+    num_lstm_layers_options = [1, 2, 3]
+    
+    # 生成所有实验组合 (3x2x3 = 18个)
     experiments = []
     for dataset in datasets:
-        for seq_model_type in seq_model_types:
-            if seq_model_type == "transformer":
-                for num_layers in num_layers_options:
-                    experiments.append({
-                        'dataset': dataset,
-                        'seq_model_type': seq_model_type,
-                        'num_transformer_layers': num_layers,
-                        'num_lstm_layers': None
-                    })
-            else:  # lstm
-                for num_layers in num_layers_options:
-                    experiments.append({
-                        'dataset': dataset,
-                        'seq_model_type': seq_model_type,
-                        'num_transformer_layers': None,
-                        'num_lstm_layers': num_layers
-                    })
+        for q_rep in question_rep_types:
+            for num_layers in num_lstm_layers_options:
+                experiments.append({
+                    'dataset': dataset,
+                    'question_rep_type': q_rep,
+                    'seq_model_type': 'lstm',
+                    'num_lstm_layers': num_layers,
+                    'num_transformer_layers': None
+                })
     
     total_experiments = len(experiments)
     
@@ -236,14 +234,15 @@ def main():
         version_name = "cot_version_input" if args.use_cot else "baseline_version_input"
         base_save_dir = f"saved_model/{version_name}"
         
-        exp_name = f"{exp['dataset']}_{exp['seq_model_type']}_layers{exp['num_transformer_layers'] or exp['num_lstm_layers']}"
+        exp_name = f"{exp['dataset']}_{exp['question_rep_type']}_{exp['seq_model_type']}_L{exp['num_lstm_layers']}"
         
         # save_dir会被训练脚本自动生成完整路径，这里只提供基础目录
         save_dir = base_save_dir
         
         print(f"数据集: {exp['dataset']}")
+        print(f"表征类型: {exp['question_rep_type']}")
         print(f"序列模型: {exp['seq_model_type']}")
-        print(f"层数: {exp['num_transformer_layers'] or exp['num_lstm_layers']}")
+        print(f"层数: {exp['num_lstm_layers']}")
         print(f"保存目录: {save_dir}")
         
         # 实验日志
@@ -299,7 +298,8 @@ def main():
                                     
                                     # 匹配条件：数据集名称、序列模型类型、层数都要匹配
                                     if (saved_params.get('dataset_name') == exp['dataset'] and
-                                        saved_params.get('seq_model_type') == exp['seq_model_type']):
+                                        saved_params.get('seq_model_type') == exp['seq_model_type'] and
+                                        saved_params.get('question_rep_type', 'visual') == exp['question_rep_type']):
                                         # 检查层数是否匹配
                                         saved_num_layers = saved_num_lstm_layers or saved_num_transformer_layers
                                         if saved_num_layers == exp_num_layers:
@@ -369,7 +369,8 @@ def main():
                 "--batch_size", str(args.batch_size),
                 "--gpu_id", assigned_gpu,  # 使用轮询分配的GPU
                 "--cot_threshold", str(args.cot_threshold),
-                "--adaptive_strategy", args.adaptive_strategy
+                "--adaptive_strategy", args.adaptive_strategy,
+                "--question_rep_type", exp['question_rep_type'] # 使用实验特定的表征类型
             ]
             
             if exp['num_transformer_layers'] is not None:
