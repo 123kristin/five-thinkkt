@@ -230,8 +230,16 @@ def main():
         assigned_gpu = gpu_list[(original_exp_idx - 1) % len(gpu_list)]
         print(f"分配GPU: cuda:{assigned_gpu} (当前循环索引: {idx}, 原始实验编号: {original_exp_idx})")
         
-        # 构建保存目录名称（实际路径会在训练时自动生成，这里只是基础目录）
-        version_name = "cot_version_input" if args.use_cot else "baseline_version_input"
+        # 构建保存目录名称
+        if args.use_cot:
+             version_name = "cot_version_input"  # CoT 版本 (Group 3)
+        else:
+             # Baseline 版本 (Group 1 & 2)
+             if exp['question_rep_type'] == 'qid':
+                 version_name = "crkt_baseline"   # Group 1: CRKT 复刻
+             else:
+                 version_name = "visual_baseline" # Group 2: Visual 基线
+
         base_save_dir = f"saved_model/{version_name}"
         
         exp_name = f"{exp['dataset']}_{exp['question_rep_type']}_{exp['seq_model_type']}_L{exp['num_lstm_layers']}"
