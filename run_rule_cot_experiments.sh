@@ -1,6 +1,6 @@
 #!/bin/bash
 echo "Starting ThinkKT Rule-Based CoT Experiments"
-mkdir -p logs
+mkdir -p cot_logs
 
 # ================= 配置区域 =================
 # 开启 CoT
@@ -23,7 +23,7 @@ nohup python scripts/run_all_thinkkt_experiments.py \
     --experiment_range "1,2,3" \
     --use_cot ${USE_COT} \
     --adaptive_strategy ${ADAPTIVE_STRATEGY} \
-    > logs/dbe_crkt_rule_cot.log 2>&1 &
+    > cot_logs/dbe_crkt_rule_cot.log 2>&1 &
 
 # 2. Visual + Rule CoT
 nohup python scripts/run_all_thinkkt_experiments.py \
@@ -31,7 +31,7 @@ nohup python scripts/run_all_thinkkt_experiments.py \
     --experiment_range "4,5,6" \
     --use_cot ${USE_COT} \
     --adaptive_strategy ${ADAPTIVE_STRATEGY} \
-    > logs/dbe_visual_rule_cot.log 2>&1 &
+    > cot_logs/dbe_visual_rule_cot.log 2>&1 &
 
 
 # --- GPU 1: XES3G5M ---
@@ -42,7 +42,7 @@ nohup python scripts/run_all_thinkkt_experiments.py \
     --experiment_range "7,8,9" \
     --use_cot ${USE_COT} \
     --adaptive_strategy ${ADAPTIVE_STRATEGY} \
-    > logs/xes_crkt_rule_cot.log 2>&1 &
+    > cot_logs/xes_crkt_rule_cot.log 2>&1 &
 
 # 2. Visual + Rule CoT
 nohup python scripts/run_all_thinkkt_experiments.py \
@@ -50,7 +50,7 @@ nohup python scripts/run_all_thinkkt_experiments.py \
     --experiment_range "10,11,12" \
     --use_cot ${USE_COT} \
     --adaptive_strategy ${ADAPTIVE_STRATEGY} \
-    > logs/xes_visual_rule_cot.log 2>&1 &
+    > cot_logs/xes_visual_rule_cot.log 2>&1 &
 
 
 # --- GPU 2: nips_task34 ---
@@ -61,7 +61,7 @@ nohup python scripts/run_all_thinkkt_experiments.py \
     --experiment_range "13,14,15" \
     --use_cot ${USE_COT} \
     --adaptive_strategy ${ADAPTIVE_STRATEGY} \
-    > logs/nips_crkt_rule_cot.log 2>&1 &
+    > cot_logs/nips_crkt_rule_cot.log 2>&1 &
 
 # 2. Visual + Rule CoT
 nohup python scripts/run_all_thinkkt_experiments.py \
@@ -69,8 +69,8 @@ nohup python scripts/run_all_thinkkt_experiments.py \
     --experiment_range "16,17,18" \
     --use_cot ${USE_COT} \
     --adaptive_strategy ${ADAPTIVE_STRATEGY} \
-    > logs/nips_visual_rule_cot.log 2>&1 &
+    > cot_logs/nips_visual_rule_cot.log 2>&1 &
 
 
 echo "All Rule-CoT jobs launched."
-echo "Logs are saved to logs/*_rule_cot.log"
+echo "Logs are saved to cot_logs/*_rule_cot.log"

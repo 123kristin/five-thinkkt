@@ -136,7 +136,10 @@ def main():
     os.chdir(args.base_dir)
     
     # 创建日志目录
-    log_dir = "experiment_input_logs"
+    if args.use_cot:
+        log_dir = "cot_logs"
+    else:
+        log_dir = "experiment_input_logs"
     os.makedirs(log_dir, exist_ok=True)
     
     # 总日志文件（使用绝对路径，避免切换目录后找不到）
