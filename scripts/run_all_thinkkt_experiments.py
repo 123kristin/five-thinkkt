@@ -237,13 +237,14 @@ def main():
         print(f"分配GPU: cuda:{assigned_gpu} (当前循环索引: {idx}, 原始实验编号: {original_exp_idx})")
         
         # 构建保存目录名称
-             strategy_suffix = f"_{args.adaptive_strategy}" if args.adaptive_strategy else ""
-             # 区分是基于 CRKT(QID) 还是 Visual
-             if exp['question_rep_type'] == 'qid':
-                 base_type = "crkt"
-             else:
-                 base_type = "visual"
-             version_name = f"{base_type}_cot{strategy_suffix}"
+        if args.use_cot:
+            strategy_suffix = f"_{args.adaptive_strategy}" if args.adaptive_strategy else ""
+            # 区分是基于 CRKT(QID) 还是 Visual
+            if exp['question_rep_type'] == 'qid':
+                base_type = "crkt"
+            else:
+                base_type = "visual"
+            version_name = f"{base_type}_cot{strategy_suffix}"
         else:
              # Baseline 版本 (Group 1 & 2)
              if exp['question_rep_type'] == 'qid':
