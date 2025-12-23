@@ -82,9 +82,12 @@ def run_command(cmd, description, log_file=None):
 
 
 def main():
+    curr_dir = os.path.dirname(os.path.abspath(__file__))
+    default_base_dir = os.path.join(curr_dir, "../scripts_training2testing/examples")
+    
     parser = argparse.ArgumentParser(description="批量运行ThinkKT实验")
     parser.add_argument("--base_dir", type=str, 
-                       default="/home3/zhiyu/code-5/CRKT/five-thinkkt/scripts_training2testing/examples",
+                       default=default_base_dir,
                        help="工作目录（包含wandb_thinkkt_train.py的目录）")
     parser.add_argument("--gpu_id", type=str, default="0", 
                        help="GPU ID（单个）或GPU列表（逗号分隔，如'0,1,2,3'）。如果提供多个GPU，将轮询分配实验")
