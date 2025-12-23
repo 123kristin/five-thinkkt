@@ -99,7 +99,10 @@ class ThinkKTNet(nn.Module):
         # 参数设置
         self.d_question = config.get('d_question', 1024)
         self.d_cot = config.get('d_cot', 384)  # CoT嵌入维度
-        self.num_c = config.get('num_c', 100)
+        
+        # 优先从 data_config 读取真实的数据集统计信息 (Crucial for XES/NIPS)
+        self.num_c = data_config.get('num_c') or config.get('num_c', 100)
+        self.num_q = data_config.get('num_q') or config.get('num_q', 500)
         self.d_knowledge = config.get('d_knowledge', 512)
         self.dropout = config.get('dropout', 0.1)
         self.use_cot = config.get('use_cot', False)
