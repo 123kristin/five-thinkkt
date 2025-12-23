@@ -103,6 +103,7 @@ class ThinkKTNet(nn.Module):
         # 优先从 data_config 读取真实的数据集统计信息 (Crucial for XES/NIPS)
         self.num_c = data_config.get('num_c') or config.get('num_c', 100)
         self.num_q = data_config.get('num_q') or config.get('num_q', 500)
+        print(f"[ThinkKTNet] DEBUG: Initialized with num_q={self.num_q}, num_c={self.num_c}")
         self.d_knowledge = config.get('d_knowledge', 512)
         self.dropout = config.get('dropout', 0.1)
         self.use_cot = config.get('use_cot', False)
@@ -314,10 +315,11 @@ class ThinkKTNet(nn.Module):
                 # output: (batch, seq)
                 num_q = q_scores.size(-1)
                 
-                # 处理 Padding: 将负数索引 (如 -1) 替换为 0，防止 one_hot 报错
-                # 这些位置在 loss 计算时会被 mask 掉，所以预测值无所谓
+                # 处理 Padding: 将负数索引替换为0，超界索引截断为num_q-1
+                # 确保绝对不报错，后续Mask会处理掉这些无效预测
                 safe_q_shift = q_shift.long()
                 safe_q_shift = torch.where(safe_q_shift >= 0, safe_q_shift, torch.zeros_like(safe_q_shift))
+                safe_q_shift = torch.clamp(safe_q_shift, 0, num_q - 1)
                 
                 y_pred = (q_scores * F.one_hot(safe_q_shift, num_q)).sum(-1)
             else:
