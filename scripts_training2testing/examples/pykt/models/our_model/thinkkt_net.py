@@ -310,7 +310,13 @@ class ThinkKTNet(nn.Module):
                 # F.one_hot dim needs to match q_scores last dim
                 # output: (batch, seq)
                 num_q = q_scores.size(-1)
-                y_pred = (q_scores * F.one_hot(q_shift.long(), num_q)).sum(-1)
+                
+                # 处理 Padding: 将负数索引 (如 -1) 替换为 0，防止 one_hot 报错
+                # 这些位置在 loss 计算时会被 mask 掉，所以预测值无所谓
+                safe_q_shift = q_shift.long()
+                safe_q_shift = torch.where(safe_q_shift >= 0, safe_q_shift, torch.zeros_like(safe_q_shift))
+                
+                y_pred = (q_scores * F.one_hot(safe_q_shift, num_q)).sum(-1)
             else:
                 # 如果没有提供 q_shift（例如推理时？），暂时不支持或默认行为
                 # 或者返回 max/mean? 这里为了安全抛出错误或返回 scalar 形式的所有
