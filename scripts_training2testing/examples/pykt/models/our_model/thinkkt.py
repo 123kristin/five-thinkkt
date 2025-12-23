@@ -321,7 +321,10 @@ class ThinkKT(nn.Module):
         """
         # 1. 如果是 QID 模式，直接查表
         if self.question_rep_type == 'qid' and self.QEmbs is not None:
-            return self.QEmbs(qids.long())
+             # 处理 Padding: 将负数索引 (如 -1) 替换为 0，防止 Embedding 报错
+             safe_qids = qids.long()
+             safe_qids = torch.where(safe_qids >= 0, safe_qids, torch.zeros_like(safe_qids))
+             return self.QEmbs(safe_qids)
             
         # 2. 如果是 Visual 模式
         if not self.use_visual or self.visual_encoder is None:
