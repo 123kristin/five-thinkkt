@@ -64,7 +64,7 @@ class ThinkKTNet(nn.Module):
     3. 预测答对概率
     """
     
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, data_config: dict):
         """
         初始化知识状态追踪器
         

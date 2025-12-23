@@ -277,7 +277,7 @@ class ThinkKT(nn.Module):
         }
         
         print(f"[ThinkKT] 正在初始化知识状态追踪器...")
-        self.kt_net = ThinkKTNet(kt_config)
+        self.kt_net = ThinkKTNet(kt_config, data_config)
         
         # --- Meta-Controller (RL Policy Network) ---
         # 输入: 状态特征 (d_question + d_knowledge + stat_features)
