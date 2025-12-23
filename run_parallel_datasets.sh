@@ -78,5 +78,5 @@ nohup python scripts/run_all_thinkkt_experiments.py \
 
 
 echo "All jobs launched in background."
-echo "Check logs/dbe_exp.log, logs/xes_exp.log, logs/nips_exp.log for progress."
+echo "Check logs/dbe_crkt.log, logs/dbe_visual.log, etc. for progress."
 echo "Use 'nvidia-smi' to monitor GPU usage."
