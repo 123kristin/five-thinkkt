@@ -164,7 +164,10 @@ class ThinkKT(nn.Module):
         
         # 题目表征来源
         self.question_rep_type = config.get('question_rep_type', 'visual') # 'visual' or 'qid'
-        self.num_q = config.get('num_q', 500) # 确保有 num_q
+        # 优先读取 data_config，确保在创建 Embedding 前拿到正确维度
+        self.num_q = data_config.get('num_q') or config.get('num_q', 500)
+        self.num_c = data_config.get('num_c') or config.get('num_c', 100)
+        print(f"[ThinkKT] DEBUG: Initialized ThinkKT with num_q={self.num_q}")
         self.d_question = config.get('d_question', 1024)
 
         if self.question_rep_type == 'qid':
@@ -324,6 +327,7 @@ class ThinkKT(nn.Module):
              # 处理 Padding: 将负数索引 (如 -1) 替换为 0，防止 Embedding 报错
              safe_qids = qids.long()
              safe_qids = torch.where(safe_qids >= 0, safe_qids, torch.zeros_like(safe_qids))
+             safe_qids = torch.clamp(safe_qids, 0, self.num_q - 1)
              return self.QEmbs(safe_qids)
             
         # 2. 如果是 Visual 模式
