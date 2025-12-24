@@ -102,9 +102,16 @@ class VisualLanguageEncoder(nn.Module):
             nn.Sigmoid()  # 输出知识点分布（0-1之间）
         )
         
-        # 特征投影层（将视觉特征投影到目标维度）
-        # Qwen2.5-VL-3B 的 hidden_size 是 2048（从 config.json 中确认）
-        self.feature_proj = nn.Linear(2048, d_question)
+        # 特征投影层（将视觉特征投影到标准缓存维度 1024）
+        # Qwen2.5-VL-3B 的 hidden_size 是 2048
+        self.cache_dim = 1024
+        self.feature_proj = nn.Linear(2048, self.cache_dim)
+        
+        # 输出适配层（如果目标维度不等于缓存维度）
+        if d_question != self.cache_dim:
+            self.output_proj = nn.Linear(self.cache_dim, d_question)
+        else:
+            self.output_proj = None
         
         # 特征缓存
         self.cache_dir = cache_dir if cache_dir else "features"
@@ -215,102 +222,110 @@ class VisualLanguageEncoder(nn.Module):
         Returns:
             v_t: 题目特征向量 (d_question,)
         """
-        # 检查缓存
+        feature = None
+        
+        # 1. 检查缓存
         if qid is not None and qid in self.question_features_cache:
-            feature = self.question_features_cache[qid].to(self.device)
-            return feature
-        
-        # 加载视觉模型
-        if not self._vision_model_loaded:
-            self._load_vision_processor()
-        
-        # 提取视觉特征
-        try:
-            # 加载图片
-            image = Image.open(img_path).convert('RGB')
-            
-            # 准备输入
-            prompt = "请分析这张图片中的题目内容，包括题干、选项和图形。"
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": prompt}
-                    ]
-                }
-            ]
-            
-            # 处理输入（使用 qwen_vl_utils 如果可用，否则手动处理）
-            text = self.vision_processor_tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            
-            if QWEN_VL_UTILS_AVAILABLE and process_vision_info is not None:
-                image_inputs, video_inputs = process_vision_info(messages)
+            cached_feature = self.question_features_cache[qid]
+            # 兼容性检查：如果是标准 1024 维，直接使用
+            # 如果是其他维度，可能是旧缓存或异常，根据策略决定
+            if cached_feature.shape[-1] == self.cache_dim:
+                feature = cached_feature.to(self.device)
+            elif cached_feature.shape[-1] == self.d_question and self.output_proj is None:
+                # 针对旧情况：缓存维度就是目标维度，且不需要投影
+                feature = cached_feature.to(self.device)
             else:
-                # 手动处理：只处理图片
-                image_inputs = [image]
-                video_inputs = []
+                # 维度完全对不上，忽略缓存，重新计算
+                pass
+        
+        # 2. 如果没有命中缓存，则计算特征
+        if feature is None:
+            # 加载视觉模型
+            if not self._vision_model_loaded:
+                self._load_vision_processor()
             
-            # 构建 processor 参数（如果 video_inputs 为空，则不传入 videos 参数）
-            processor_kwargs = {
-                "text": [text],
-                "images": image_inputs,
-                "padding": True,
-                "return_tensors": "pt"
-            }
-            # 只有当 video_inputs 不为空时才添加 videos 参数
-            if video_inputs and len(video_inputs) > 0:
-                processor_kwargs["videos"] = video_inputs
-            
-            inputs = self.vision_processor_tokenizer(**processor_kwargs)
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            
-            # 提取隐藏状态（使用最后几层的平均）
-            with torch.no_grad():
-                outputs = self.vision_model(**inputs, output_hidden_states=True)
-                hidden_states = outputs.hidden_states  # tuple of tensors
+            try:
+                # 加载图片
+                image = Image.open(img_path).convert('RGB')
                 
-                # 取最后2层的隐藏状态并平均池化
-                # hidden_states[-1] 形状: (batch_size, seq_len, hidden_size)
-                last_layers = hidden_states[-2:]  # 最后2层
-                pooled_states = []
-                for h in last_layers:
-                    # 对序列维度求平均（排除padding）
-                    mask = inputs.get('attention_mask', None)
-                    if mask is not None:
-                        # 使用attention mask进行masked mean
-                        h_masked = h * mask.unsqueeze(-1)
-                        pooled = h_masked.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp(min=1)
-                    else:
-                        pooled = h.mean(dim=1)
-                    pooled_states.append(pooled)
+                # 准备输入
+                prompt = "请分析这张图片中的题目内容，包括题干、选项和图形。"
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": image},
+                            {"type": "text", "text": prompt}
+                        ]
+                    }
+                ]
                 
-                # 平均最后2层的池化结果
-                hidden_state = torch.stack(pooled_states).mean(dim=0).squeeze(0)  # (hidden_size,)
+                # 处理输入
+                text = self.vision_processor_tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                
+                if QWEN_VL_UTILS_AVAILABLE and process_vision_info is not None:
+                    image_inputs, video_inputs = process_vision_info(messages)
+                else:
+                    image_inputs = [image]
+                    video_inputs = []
+                
+                processor_kwargs = {
+                    "text": [text],
+                    "images": image_inputs,
+                    "padding": True,
+                    "return_tensors": "pt"
+                }
+                if video_inputs and len(video_inputs) > 0:
+                    processor_kwargs["videos"] = video_inputs
+                
+                inputs = self.vision_processor_tokenizer(**processor_kwargs)
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
+                
+                # 提取隐藏状态
+                with torch.no_grad():
+                    outputs = self.vision_model(**inputs, output_hidden_states=True)
+                    hidden_states = outputs.hidden_states
+                    last_layers = hidden_states[-2:]
+                    pooled_states = []
+                    for h in last_layers:
+                        mask = inputs.get('attention_mask', None)
+                        if mask is not None:
+                            h_masked = h * mask.unsqueeze(-1)
+                            pooled = h_masked.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp(min=1)
+                        else:
+                            pooled = h.mean(dim=1)
+                        pooled_states.append(pooled)
+                    hidden_state = torch.stack(pooled_states).mean(dim=0).squeeze(0)
+                
+                # 投影到标准缓存维度（1024）
+                hidden_state = hidden_state.unsqueeze(0)
+                if hidden_state.dtype == torch.bfloat16:
+                    hidden_state = hidden_state.float()
+                
+                # 关键：总是投影到 cache_dim (1024)
+                feature = self.feature_proj(hidden_state).squeeze(0) # (1024,)
+                
+                # 更新缓存 (存的是 1024 维的标准特征)
+                if qid is not None and self.use_cache:
+                    self.question_features_cache[qid] = feature.detach().cpu()
+                
+                # 即使新计算的，也已经是 tensor on device
+                
+            except Exception as e:
+                print(f"[VisualLanguageEncoder] 警告: 处理图片失败 {img_path}: {e}")
+                # 返回零向量（标准维度）
+                feature = torch.zeros(self.cache_dim, device=self.device)
+
+        # 3. 如果有 output_proj，则进行投影
+        if self.output_proj is not None:
+            # feature 是 (1024,)
+            # 投影到 d_question (200,)
+            feature = self.output_proj(feature)
             
-            # 投影到目标维度（确保数据类型匹配）
-            hidden_state = hidden_state.unsqueeze(0)  # (1, hidden_size)
-            # 转换数据类型：如果模型是 bfloat16，转换为 float32 以匹配投影层
-            if hidden_state.dtype == torch.bfloat16:
-                hidden_state = hidden_state.float()
-            v_t = self.feature_proj(hidden_state)  # (1, d_question)
-            v_t = v_t.squeeze(0)  # (d_question,)
-            
-            # 缓存特征
-            if qid is not None and self.use_cache:
-                self.question_features_cache[qid] = v_t.detach().cpu()
-            
-            return v_t.to(self.device)
-            
-        except Exception as e:
-            print(f"[VisualLanguageEncoder] 警告: 处理图片失败 {img_path}: {e}")
-            import traceback
-            traceback.print_exc()
-            # 返回零向量作为fallback
-            return torch.zeros(self.d_question, device=self.device)
-    
+        return feature
+
     def encode_batch(
         self, 
         img_paths: List[str], 
@@ -404,7 +419,6 @@ class VisualLanguageEncoder(nn.Module):
             valid_features = torch.zeros((0, self.d_question), device=self.device)
         
         # 构建完整特征矩阵
-        # 构建完整特征矩阵
         v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
         
         if valid_indices:
@@ -428,7 +442,7 @@ class VisualLanguageEncoder(nn.Module):
             k_t = k_t_flat.view(batch_size, seq_len, self.num_c)  # (batch_size, seq_len, num_c)
         
         return v_t, k_t
-    
+
     def to(self, device):
         """重写to方法，确保所有组件都移动到正确设备"""
         super().to(device)
@@ -437,6 +451,8 @@ class VisualLanguageEncoder(nn.Module):
         # 移动分类头和投影层
         self.kc_classifier = self.kc_classifier.to(device)
         self.feature_proj = self.feature_proj.to(device)
+        if self.output_proj is not None:
+            self.output_proj = self.output_proj.to(device)
         
         # 注意：视觉处理器保持原设备（通常已经通过device_map="auto"加载）
         

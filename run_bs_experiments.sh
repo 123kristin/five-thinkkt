@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 创建日志目录
-mkdir -p bs_logs
+mkdir -p saved_model/bs/logs
 
 # 定义运行函数的逻辑
 run_dataset_experiments() {
@@ -13,42 +13,43 @@ run_dataset_experiments() {
     # 切换不同实验类型
     for Q_TYPE in "qid" "visual" "v&q"; do
         
-        # 确定保存目录
+        # 确定保存目录名 (只是名字，不是全路径)
         if [ "$Q_TYPE" == "qid" ]; then
-            SAVE_DIR="bs_qid"
-            # QID模式需要确保 d_question 正确 (这里脚本传参200以防万一，虽然代码内部已处理)
-            # 但 wandb_thinkkt_train.py 默认 1024。
-            # 我们的代码修改会 override config，所以这里传什么不重要，但为了清晰可以传 200
+            TYPE_DIR="qid"
             D_QUESTION_ARG=200
         elif [ "$Q_TYPE" == "visual" ]; then
-            SAVE_DIR="bs_visual"
-            D_QUESTION_ARG=1024 # Visual features are 1024
+            TYPE_DIR="visual"
+            D_QUESTION_ARG=200 # Use 200 to trigger adapter (1024->200)
         elif [ "$Q_TYPE" == "v&q" ]; then
-            SAVE_DIR="bs_v&q" # 允许 & 符号
-            D_QUESTION_ARG=1024 # Logic handles this
+            TYPE_DIR="v&q" # 允许 & 符号
+            D_QUESTION_ARG=200 # Use 200 to trigger adapter (1024->200)
         fi
         
-        # 确保保存目录存在 (相对于 working dir)
-        mkdir -p "scripts_training2testing/examples/$SAVE_DIR"
+        # 确保保存目录存在 (相对于 root)
+        # 目标: saved_model/bs/{qid, visual, v&q}
+        REL_SAVE_DIR="saved_model/bs/$TYPE_DIR"
+        mkdir -p "$REL_SAVE_DIR"
 
         # 遍历 LSTM 层数
         for LAYERS in 1 2 3; do
             
             # 构造日志文件名 (处理 & 符号)
             SAFE_TYPE=$(echo $Q_TYPE | sed 's/&/_and_/g')
-            LOG_FILE="bs_logs/${DATASET}_${SAFE_TYPE}_lstm${LAYERS}.log"
+            LOG_FILE="saved_model/bs/logs/${DATASET}_${SAFE_TYPE}_lstm${LAYERS}.log"
             
             echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=$Q_TYPE Layers=$LAYERS"
             echo "Logs: $LOG_FILE"
+            echo "Save Dir: $REL_SAVE_DIR"
             
             # 运行命令
             # 注意: 需要在 scripts_training2testing/examples 目录下运行
+            # save_dir 需要传递相对于 examples 的路径，即 ../../saved_model/bs/xxx
             (cd scripts_training2testing/examples && \
              python wandb_thinkkt_train.py \
                 --dataset_name "$DATASET" \
                 --question_rep_type "$Q_TYPE" \
                 --num_lstm_layers "$LAYERS" \
-                --save_dir "$SAVE_DIR" \
+                --save_dir "../../$REL_SAVE_DIR" \
                 --d_question $D_QUESTION_ARG \
                 --gpu_id "$GPU_ID" \
                 --use_cot 0 \

@@ -179,11 +179,18 @@ class ThinkKT(nn.Module):
             self.QEmbs = None
             
         if self.question_rep_type in ['visual', 'v&q']:
-            # Visual Projector: 1024 -> 200
-            self.visual_dim = 1024 # Default visual dim from Qwen
+            # Visual Projector: maps from encoder output to target CRKT dimension (200)
+            # Use self.d_question as source dim (decided by config passed to Encoder)
+            self.visual_dim = self.d_question 
             self.proj_dim = 200    # Target projection dim matching CRKT
-            print(f"[ThinkKT] Initializing Visual Projector ({self.visual_dim} -> {self.proj_dim}) for mode: {self.question_rep_type}")
-            self.visual_projector = nn.Linear(self.visual_dim, self.proj_dim)
+            
+            # Create projector only if dimensions differ
+            if self.visual_dim != self.proj_dim:
+                print(f"[ThinkKT] Initializing Visual Projector ({self.visual_dim} -> {self.proj_dim}) for mode: {self.question_rep_type}")
+                self.visual_projector = nn.Linear(self.visual_dim, self.proj_dim)
+            else:
+                print(f"[ThinkKT] Visual Dim ({self.visual_dim}) matches Target Dim ({self.proj_dim}), skipping extra projector.")
+                self.visual_projector = None
         else:
             self.visual_projector = None
             
@@ -191,7 +198,7 @@ class ThinkKT(nn.Module):
         if self.question_rep_type == 'qid':
             self.net_d_question = 200
         elif self.question_rep_type == 'visual':
-            self.net_d_question = 200 # Projected
+            self.net_d_question = 200 # Projected to target
         elif self.question_rep_type == 'v&q':
             self.net_d_question = 400 # 200 (QID) + 200 (Visual Proj)
         else:
@@ -358,14 +365,16 @@ class ThinkKT(nn.Module):
 
         # 2. 获取 Visual Feature (1024 -> 200 dim)
         v_visual = None
-        if self.visual_encoder is not None and self.visual_projector is not None:
-            # 使用多模态编码器提取原生特征 (batch, seq, 1024)
-            v_raw, _ = self.visual_encoder(qids, self.img_path_dict, return_kc=False)
-            # 投影降维
-            v_visual = self.visual_projector(v_raw) # (batch, seq, 200)
-        elif self.use_visual and self.visual_projector is not None:
-             # Visual mode but encoder logic not ready? (Fallback)
-             # Should assume visual_encoder is present if use_visual=True
+        if self.visual_encoder is not None:
+            # 使用多模态编码器提取特征 (batch, seq, d_question)
+            # 现在 d_question 可能已经是 200 (由 Encoder adapter 降维)
+            v_visual, _ = self.visual_encoder(qids, self.img_path_dict, return_kc=False)
+            
+            # 只有当配置了额外投影层时才投影
+            if self.visual_projector is not None:
+                v_visual = self.visual_projector(v_visual) # (batch, seq, 200)
+        elif self.use_visual:
+             # Fallback
              pass
              
         # 3. 组合特征
@@ -395,17 +404,6 @@ class ThinkKT(nn.Module):
     ) -> Optional[torch.Tensor]:
         """
         获取CoT嵌入
-        
-        Args:
-            qids: 问题ID张量 (batch_size, seq_len)
-            rseqs: 答题结果张量 (batch_size, seq_len)
-            cseqs: 知识点序列 (batch_size, seq_len, max_concepts) 可选
-            img_path_dict: 问题ID到图片路径的映射
-            kc_vocab: 知识点词表
-            v_feat: (batch, seq_len, d_question) 题目视觉特征，若为 None 则内部暂无法使用策略网络(除非再次计算)
-            
-        Returns:
-            r_embed: CoT嵌入 (batch_size, seq_len, d_cot) 或 None
         """
         if not self.use_cot or self.cot_generator is None:
             return None
@@ -413,27 +411,30 @@ class ThinkKT(nn.Module):
         batch_size, seq_len = qseqs.shape
         device = qseqs.device
         
+        # 使用列表收集CPU上的tensor，最后由主函数统一移动
         cot_embeds = []
         
         # 维护知识点频次 (batch_level)
-        # map: batch_idx -> {kc: count}
         from collections import defaultdict
         kc_counts_map = [defaultdict(int) for _ in range(batch_size)]
-        
-        # 统计 Counters
-        processed_items = 0
-        cached_count = 0
-        generated_count = 0
-        total_items = batch_size * seq_len
-        # 转换为 list 以便处理
-        qseqs_list = qseqs.cpu().tolist()
-        rseqs_list = rseqs.cpu().tolist()
-        if cseqs is not None:
-            cseqs_list = cseqs.cpu().tolist()
         
         print(f"[ThinkKT] Generating CoT (Strategy={self.adaptive_strategy})...")
         import sys
         sys.stdout.flush()
+        
+        # 预先生成全0向量 (CPU)
+        zero_embed = torch.zeros(self.d_cot)
+        
+        qseqs_list = qseqs.cpu().tolist()
+        rseqs_list = rseqs.cpu().tolist()
+        cseqs_list = None
+        if cseqs is not None:
+            cseqs_list = cseqs.cpu().tolist()
+        
+        processed_items = 0
+        cached_count = 0
+        generated_count = 0
+        total_items = batch_size * seq_len
         
         for i in range(batch_size):
             history_qids = []
@@ -446,23 +447,23 @@ class ThinkKT(nn.Module):
             for j in range(seq_len):
                 qid = qseqs_list[i][j]
                 if qid == 0: # Padding
-                    seq_cot_embeds.append(torch.zeros(self.d_cot).to(device))
-                    # Update history for next step, but don't process padding
-                    if j > 0: # Only add to history if not the first element and not padding
-                        history_qids.append(qseqs_list[i][j-1])
-                        history_rs.append(rseqs_list[i][j-1])
-                        if cseqs is not None:
-                            prev_kcs = [k for k in cseqs_list[i][j-1] if k != -1]
-                            history_kcs_list.append(prev_kcs)
+                    seq_cot_embeds.append(zero_embed)
+                    # Update history not needed for padding
                     continue
-                    
+                
+                # Update history for next step (using previous step's data)
+                if j > 0: 
+                    history_qids.append(qseqs_list[i][j-1])
+                    history_rs.append(rseqs_list[i][j-1])
+                    if cseqs_list is not None:
+                        prev_kcs = [k for k in cseqs_list[i][j-1] if k != -1]
+                        history_kcs_list.append(prev_kcs)
+
                 processed_items += 1
                 
-                # 获取知识点
+                # 获取当前题目知识点
                 current_kcs = []
-                if cseqs is not None:
-                    # 假设 cseqs: [batch, seq_len, max_concepts]
-                    # 我们过滤掉 -1 padding
+                if cseqs_list is not None:
                     for k in cseqs_list[i][j]:
                         if k != -1:
                             current_kcs.append(k)
@@ -471,60 +472,40 @@ class ThinkKT(nn.Module):
                 should_generate = False
                 
                 # 1. 计算频次状态
-                # 这里简单取第一个知识点作为代表，或者取最大频次
                 min_count = 9999
                 if current_kcs:
                     for k in current_kcs:
                         c = kc_counts_map[i][k]
                         if c < min_count: min_count = c
-                else: # If no KCs, treat as novel
+                else: 
                     min_count = 0
                 
                 # 2. 策略分支
                 if self.adaptive_strategy == 'rule':
-                    # 规则模式: 频次小于阈值则生成
                     if min_count < self.cot_threshold:
                         should_generate = True
                         
                 elif self.adaptive_strategy == 'learnable':
-                    # RL 模式: 使用 Policy Network 判断
-                    # 注意: 为了推理时能用，我们需要 v_t。
-                    # 如果 v_feat 传进来了，就用；否则暂时降级为 Rule (防止报错)
                     if v_feat is not None:
-                        # 构造 Input
                         v_t_current = v_feat[i, j].unsqueeze(0) # (1, d_question)
-                        # h_t is the knowledge state *before* processing current item.
-                        # For now, we use a dummy zero vector for h_prev as it's not readily available here.
-                        # A more sophisticated approach would require passing h_t from KTNet.
                         h_dummy = torch.zeros(1, self.kt_net.d_knowledge).to(device) 
                         cnt_tsr = torch.tensor([[min_count]], dtype=torch.float).to(device)
-                        
-                        # Forward Policy
-                        # 只需要概率，不需要采样 (推理时使用 Greedy 或 Threshold 0.5)
                         _, _, prob = self.forward_policy(v_t_current, h_dummy, cnt_tsr)
                         if prob.item() > 0.5:
                             should_generate = True
                     else:
-                        # Fallback to rule-based if v_feat is not provided for learnable strategy
                         if min_count < self.cot_threshold: should_generate = True
-                # -------------------
-                
                 
                 # 获取当前题目图片路径
                 if qid in self.img_path_dict:
                     img_path = self.img_path_dict[qid]
                 else:
-                    # 如果找不到路径，返回零向量
-                    seq_cot_embeds.append(torch.zeros(self.d_cot, device=device))
-                    if processed_items % 10 == 0:
-                        print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count}", end='\r')
-                        sys.stdout.flush()
+                    seq_cot_embeds.append(zero_embed)
                     continue
                 
-                # 生成 CoT (仅当策略决定生成时)
+                # 生成 CoT
                 if should_generate:
                     try:
-                        # 检查是否在缓存中
                         cache_key = self.cot_generator._get_cache_key(history_qids, history_rs, qid)
                         from_cache = cache_key in self.cot_generator.cot_cache
                         
@@ -543,32 +524,30 @@ class ThinkKT(nn.Module):
                         else:
                             generated_count += 1
                         
-                        seq_cot_embeds.append(cot_embed.to(device))
+                        # 优化：保持在CPU上直到最后
+                        seq_cot_embeds.append(cot_embed.cpu())
                         
-                        # 每10个或每生成一个非缓存的CoT时输出进度
                         if processed_items % 10 == 0 or not from_cache:
                             print(f"[ThinkKT] CoT进度: {processed_items}/{total_items} ({100*processed_items/total_items:.1f}%) | 缓存:{cached_count} 生成:{generated_count} | 当前qid={qid}", end='\r')
                             sys.stdout.flush()
                             
                     except Exception as e:
-                        print(f"\n[ThinkKT] 警告: 生成 CoT 失败 (qid={qid}, batch={i}, seq={j}): {e}")
-                        sys.stdout.flush()
-                        seq_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                        print(f"\n[ThinkKT] 警告: 生成 CoT 失败: {e}")
+                        seq_cot_embeds.append(zero_embed)
                 else:
-                    # 策略决定跳过 CoT 生成
-                    seq_cot_embeds.append(torch.zeros(self.d_cot, device=device))
+                    seq_cot_embeds.append(zero_embed)
                 
                 # 更新知识点频次
                 if current_kcs:
                     for k in current_kcs:
                         kc_counts_map[i][k] += 1
             
-            cot_embeds.append(torch.stack(seq_cot_embeds))
+            # Batch loop end: Stack and move to device once
+            cot_embeds.append(torch.stack(seq_cot_embeds).to(device))
         
         print(f"\n[ThinkKT] CoT生成完成: 总计 {processed_items} 个，缓存: {cached_count}，新生成: {generated_count}")
         sys.stdout.flush()
         
-        # 堆叠为 (batch_size, seq_len, d_cot)
         r_embed = torch.stack(cot_embeds)
         return r_embed
 
