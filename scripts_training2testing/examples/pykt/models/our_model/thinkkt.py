@@ -254,7 +254,6 @@ class ThinkKT(nn.Module):
             # 但 Encoder 需要的是视觉部分的维度（200）。
             # 使用 self.visual_dim (如果存在) 作为 Encoder 的目标维度。
             enc_dim = self.visual_dim if hasattr(self, 'visual_dim') else self.d_question
-            print(f"[ThinkKT] Initializing VisualLanguageEncoder with d_question={enc_dim} (Original d_q={self.d_question})")
             
             self.visual_encoder = VisualLanguageEncoder(
                 num_c=self.num_c,

@@ -331,9 +331,6 @@ class ThinkKTNet(nn.Module):
             # 这是通过CausalTransformerEncoderLayer自动实现的
             h_t = self.seq_model(z, src_key_padding_mask=src_key_padding_mask)
         else:  # LSTM
-            # DEBUG PRINTS
-            print(f"DEBUG: v_t={v_t.shape}, kc={kc_avg_embs.shape}, zero={zero_vector.shape}")
-            print(f"DEBUG: d_input={self.seq_model.input_size}, d_question={self.d_question}, dim_qc={self.dim_qc}, z.shape={z.shape}")
             # LSTM处理变长序列
             if mask is not None:
                 # 使用pack_padded_sequence处理变长序列
@@ -341,14 +338,7 @@ class ThinkKTNet(nn.Module):
                 z_packed = nn.utils.rnn.pack_padded_sequence(
                     z, lengths, batch_first=True, enforce_sorted=False
                 )
-                try:
-                    h_t_packed, _ = self.seq_model(z_packed)
-                except RuntimeError as e:
-                    print(f"LSTM Error! z_packed data shape: {z_packed.data.shape}")
-                    print(f"self.seq_model input_size: {self.seq_model.input_size}")
-                    print(f"self.d_question: {self.d_question}, self.dim_qc: {self.dim_qc}")
-                    raise e
-
+                h_t_packed, _ = self.seq_model(z_packed)
                 h_t, _ = nn.utils.rnn.pad_packed_sequence(
                     h_t_packed, batch_first=True, total_length=seq_len
                 )
