@@ -332,24 +332,62 @@ class VisualLanguageEncoder(nn.Module):
         qids: Optional[List[int]] = None
     ) -> torch.Tensor:
         """
-        批量编码图片
-        
-        Args:
-            img_paths: 图片路径列表
-            qids: 问题ID列表（用于缓存）
-            
-        Returns:
-            v_t: 题目特征矩阵 (batch_size, d_question)
+        批量编码图片 (加速版)
         """
         batch_size = len(img_paths)
-        features = []
+        
+        # 收集特征 (暂时都在CPU上，避免频繁GPU通信)
+        # 默认为 1024 (cache_dim)
+        features_list = [] 
         
         for i, img_path in enumerate(img_paths):
             qid = qids[i] if qids is not None else None
-            feature = self.encode_image(img_path, qid)
-            features.append(feature)
+            
+            # 1. 尝试从缓存读取
+            if qid is not None and self.use_cache and qid in self.question_features_cache:
+                feat = self.question_features_cache[qid] # (1024,) CPU
+                features_list.append(feat)
         
-        return torch.stack(features)  # (batch_size, d_question)
+        # --- 重新实现 ---
+        final_features = [None] * batch_size
+        miss_indices = []
+        
+        # 1. First Pass: Cache Lookup
+        cache_hits = []
+        cache_hit_indices = []
+        
+        for i, img_path in enumerate(img_paths):
+            qid = qids[i] if qids is not None else None
+            if qid is not None and self.use_cache and qid in self.question_features_cache:
+                # Hit
+                cache_hits.append(self.question_features_cache[qid]) # CPU, 1024
+                cache_hit_indices.append(i)
+            else:
+                miss_indices.append(i)
+        
+        # 2. Process Hits (Batch)
+        if cache_hits:
+            # Stack on CPU
+            hit_tensor = torch.stack(cache_hits) # (N_hit, 1024)
+            # Move to Device
+            hit_tensor = hit_tensor.to(self.device)
+            # Project if needed
+            if self.output_proj is not None:
+                hit_tensor = self.output_proj(hit_tensor) # (N_hit, 200)
+            
+            # Store results
+            for idx, i in enumerate(cache_hit_indices):
+                final_features[i] = hit_tensor[idx]
+
+        # 3. Process Misses (Serial - Slow but Rare)
+        if miss_indices:
+            for i in miss_indices:
+                img_path = img_paths[i]
+                qid = qids[i] if qids is not None else None
+                # encode_image returns final projected tensor on device
+                final_features[i] = self.encode_image(img_path, qid)
+        
+        return torch.stack(final_features)
     
     def predict_kc_distribution(self, v_t: torch.Tensor) -> torch.Tensor:
         """
@@ -396,18 +434,23 @@ class VisualLanguageEncoder(nn.Module):
         qids_cpu = qids.cpu().numpy()
         
         # 获取图片路径
-        img_paths = []
-        qids_list = []
-        for b in range(batch_size):
-            for s in range(seq_len):
-                qid = int(qids_cpu[b, s])
-                if qid in img_path_dict:
-                    img_paths.append(img_path_dict[qid])
-                    qids_list.append(qid)
-                else:
-                    # 如果找不到路径，使用占位符
-                    img_paths.append(None)
-                    qids_list.append(-1)
+        # Optimization: Flatten loops for speed
+        qids_flat = qids_cpu.reshape(-1).astype(int)
+        
+        # 使用列表推导式快速查表 (Python loop over 12k items is faster than nested loop)
+        # 预取 get 方法
+        get_path = img_path_dict.get
+        
+        pairs = [
+            (get_path(q), q) if q in img_path_dict else (None, -1)
+            for q in qids_flat
+        ]
+        
+        # 解包 (如果 pairs 为空处理起来要小心，但 batch_size > 0)
+        if pairs:
+            img_paths, qids_list = zip(*pairs)
+        else:
+            img_paths, qids_list = [], []
         
         # 批量编码（跳过None路径）
         valid_indices = [i for i, path in enumerate(img_paths) if path is not None]

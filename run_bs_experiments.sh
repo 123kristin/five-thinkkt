@@ -40,8 +40,27 @@ run_type_experiments() {
                 
                 echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=$Q_TYPE Layers=$LAYERS"
                 
-                # 运行命令
+                # Check for completion
                 (cd scripts_training2testing/examples && \
+                 python check_completion.py \
+                    --dataset_name "$DATASET" \
+                    --question_rep_type "$Q_TYPE" \
+                    --num_lstm_layers "$LAYERS" \
+                    --save_dir "../../$REL_SAVE_DIR" \
+                    --d_question $D_QUESTION_ARG \
+                    --use_cot 0 \
+                    --use_visual 1 \
+                    --num_epochs 200)
+                
+                if [ $? -eq 0 ]; then
+                    echo "[GPU $GPU_ID] Skipping completed experiment: Dataset=$DATASET Type=$Q_TYPE Layers=$LAYERS"
+                    continue
+                fi
+
+                # 运行命令 (训练 + 预测)
+                (cd scripts_training2testing/examples && \
+                 # 1. 训练
+                 echo "Starting Training..." > "../../$LOG_FILE"
                  python wandb_thinkkt_train.py \
                     --dataset_name "$DATASET" \
                     --question_rep_type "$Q_TYPE" \
@@ -52,7 +71,25 @@ run_type_experiments() {
                     --use_cot 0 \
                     --use_visual 1 \
                     --num_epochs 200 \
-                     > "../../$LOG_FILE" 2>&1)
+                     >> "../../$LOG_FILE" 2>&1
+                 
+                 # 2. 提取保存路径并预测
+                 # 从日志中提取 "模型目录: path/to/ckpt"
+                 CKPT_PATH=$(grep "模型目录: " "../../$LOG_FILE" | tail -n 1 | awk '{print $2}')
+                 
+                 if [ ! -z "$CKPT_PATH" ]; then
+                     echo "Training Finished. Found Checkpoint: $CKPT_PATH" >> "../../$LOG_FILE"
+                     echo "Starting Prediction..." >> "../../$LOG_FILE"
+                     
+                     python wandb_predict.py \
+                        --save_dir "$CKPT_PATH" \
+                        --gpu_id "$GPU_ID" \
+                        --use_wandb 0 \
+                        >> "../../$LOG_FILE" 2>&1
+                 else
+                     echo "Error: Could not find Checkpoint Path in log file!" >> "../../$LOG_FILE"
+                 fi
+                )
                 
                 echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=$Q_TYPE Layers=$LAYERS"
             done

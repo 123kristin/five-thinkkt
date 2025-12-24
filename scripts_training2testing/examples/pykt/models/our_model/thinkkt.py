@@ -370,7 +370,10 @@ class ThinkKT(nn.Module):
 
         # 2. 获取 Visual Feature (1024 -> 200 dim)
         v_visual = None
-        if self.visual_encoder is not None:
+        # Optimization: Only run visual encoder if needed
+        should_run_visual = (self.visual_encoder is not None) and (self.question_rep_type in ['visual', 'v&q'])
+        
+        if should_run_visual:
             # 使用多模态编码器提取特征 (batch, seq, d_question)
             # 现在 d_question 可能已经是 200 (由 Encoder adapter 降维)
             v_visual, _ = self.visual_encoder(qids, self.img_path_dict, return_kc=False)
