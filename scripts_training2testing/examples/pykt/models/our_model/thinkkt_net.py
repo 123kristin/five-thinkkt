@@ -332,6 +332,7 @@ class ThinkKTNet(nn.Module):
             h_t = self.seq_model(z, src_key_padding_mask=src_key_padding_mask)
         else:  # LSTM
             # DEBUG PRINTS
+            print(f"DEBUG: v_t={v_t.shape}, kc={kc_avg_embs.shape}, zero={zero_vector.shape}")
             print(f"DEBUG: d_input={self.seq_model.input_size}, d_question={self.d_question}, dim_qc={self.dim_qc}, z.shape={z.shape}")
             # LSTM处理变长序列
             if mask is not None:

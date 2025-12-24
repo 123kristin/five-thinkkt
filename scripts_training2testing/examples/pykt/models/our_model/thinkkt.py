@@ -250,9 +250,14 @@ class ThinkKT(nn.Module):
         # 初始化多模态编码器
         if self.use_visual:
             print(f"[ThinkKT] 正在初始化多模态编码器...")
+            # 关键修正：在 v&q 模式下，self.d_question 被修改为 400（总维度），
+            # 但 Encoder 需要的是视觉部分的维度（200）。
+            # 使用 self.visual_dim (如果存在) 作为 Encoder 的目标维度。
+            enc_dim = self.visual_dim if hasattr(self, 'visual_dim') else self.d_question
+            
             self.visual_encoder = VisualLanguageEncoder(
                 num_c=self.num_c,
-                d_question=self.d_question,
+                d_question=enc_dim,
                 model_path=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
                 cache_dir=config.get('cache_dir', 'features'),
                 dataset_name=self.dataset_name,
