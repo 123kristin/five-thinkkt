@@ -312,7 +312,10 @@ class ThinkKTNet(nn.Module):
         mask_r = (r == 1).unsqueeze(-1).expand_as(correct_input)  # (batch_size, seq_len, d_input)
         z = torch.where(mask_r, correct_input, wrong_input)  # (batch_size, seq_len, d_input)
         
-        z = self.fusion_layer(z)  # (batch_size, seq_len, d_knowledge)
+        if self.use_fusion_layer_flag:
+            z = self.fusion_layer(z)  # (batch_size, seq_len, d_knowledge)
+        else:
+            pass # Keep z as is (batch_size, seq_len, d_input)
         
         # 3. 序列建模
         if self.seq_model_type == 'transformer':
