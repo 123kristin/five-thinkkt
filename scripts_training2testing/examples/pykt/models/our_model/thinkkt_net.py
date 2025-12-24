@@ -331,8 +331,12 @@ class ThinkKTNet(nn.Module):
             # 这是通过CausalTransformerEncoderLayer自动实现的
             h_t = self.seq_model(z, src_key_padding_mask=src_key_padding_mask)
         else:  # LSTM
-            # LSTM处理变长序列
-            if mask is not None:
+            # CRKT复刻修改：强制关闭 pack_padded_sequence
+            # CRKT Baseline 不使用 packing，直接将 padding 数据喂入 LSTM
+            # 为了验证差异来源，这里临时禁用 packing
+            use_packing = False 
+            
+            if mask is not None and use_packing:
                 # 使用pack_padded_sequence处理变长序列
                 lengths = mask.sum(dim=1).cpu().long()  # (batch_size,)
                 z_packed = nn.utils.rnn.pack_padded_sequence(
@@ -343,6 +347,7 @@ class ThinkKTNet(nn.Module):
                     h_t_packed, batch_first=True, total_length=seq_len
                 )
             else:
+                # CRKT 风格：直接处理，包含 padding
                 h_t, _ = self.seq_model(z)
         
         # 4. 预测
