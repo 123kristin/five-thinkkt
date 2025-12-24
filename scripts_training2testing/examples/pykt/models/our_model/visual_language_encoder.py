@@ -404,13 +404,21 @@ class VisualLanguageEncoder(nn.Module):
             valid_features = torch.zeros((0, self.d_question), device=self.device)
         
         # 构建完整特征矩阵
+        # 构建完整特征矩阵
         v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
-        valid_idx = 0
-        for i, path in enumerate(img_paths):
-            if path is not None:
-                b, s = i // seq_len, i % seq_len
-                v_t[b, s] = valid_features[valid_idx].to(device)
-                valid_idx += 1
+        
+        if valid_indices:
+            # 向量化填充：避免Python循环
+            # valid_features 已经在 self.device 上
+            # 计算对应的 (b, s) 索引
+            valid_indices_tensor = torch.tensor(valid_indices, device=device, dtype=torch.long)
+            batch_indices = valid_indices_tensor // seq_len
+            seq_indices = valid_indices_tensor % seq_len
+            
+            # 一次性且直接在GPU上赋值
+            # 确保 valid_features 和 v_t 在同一设备
+            valid_features = valid_features.to(device)
+            v_t[batch_indices, seq_indices] = valid_features
         
         # 预测知识点分布
         k_t = None

@@ -170,11 +170,36 @@ class ThinkKT(nn.Module):
         print(f"[ThinkKT] DEBUG: Initialized ThinkKT with num_q={self.num_q}")
         self.d_question = config.get('d_question', 1024)
 
-        if self.question_rep_type == 'qid':
-            print(f"[ThinkKT] 使用题目ID表征 (CRKT模式), dimension={self.d_question}")
-            self.QEmbs = nn.Embedding(self.num_q, self.d_question)
+        if self.question_rep_type in ['qid', 'v&q']:
+            # CRKT Default Dim = 200
+            self.qid_dim = 200 
+            print(f"[ThinkKT] Initializing QID Embeddings (Dim={self.qid_dim}) for mode: {self.question_rep_type}")
+            self.QEmbs = nn.Embedding(self.num_q, self.qid_dim)
         else:
-             self.QEmbs = None
+            self.QEmbs = None
+            
+        if self.question_rep_type in ['visual', 'v&q']:
+            # Visual Projector: 1024 -> 200
+            self.visual_dim = 1024 # Default visual dim from Qwen
+            self.proj_dim = 200    # Target projection dim matching CRKT
+            print(f"[ThinkKT] Initializing Visual Projector ({self.visual_dim} -> {self.proj_dim}) for mode: {self.question_rep_type}")
+            self.visual_projector = nn.Linear(self.visual_dim, self.proj_dim)
+        else:
+            self.visual_projector = None
+            
+        # Determine effective d_question for inner network
+        if self.question_rep_type == 'qid':
+            self.net_d_question = 200
+        elif self.question_rep_type == 'visual':
+            self.net_d_question = 200 # Projected
+        elif self.question_rep_type == 'v&q':
+            self.net_d_question = 400 # 200 (QID) + 200 (Visual Proj)
+        else:
+            self.net_d_question = self.d_question # Fallback
+            
+        # Override config for ThinkKTNet
+        print(f"[ThinkKT] Overriding d_question for Inner Net: {self.net_d_question}")
+        config['d_question'] = self.net_d_question
         
         # 设备管理（与CRKT一致）
         if torch.cuda.is_available():
@@ -322,32 +347,42 @@ class ThinkKT(nn.Module):
         Returns:
             v_t: 题目特征 (batch_size, seq_len, d_question)
         """
-        # 1. 如果是 QID 模式，直接查表
-        if self.question_rep_type == 'qid' and self.QEmbs is not None:
-             # 处理 Padding: 将负数索引 (如 -1) 替换为 0，防止 Embedding 报错
+        # 1. 获取 QID Embedding (200 dim)
+        v_qid = None
+        if self.QEmbs is not None:
+             # 处理 Padding: 将负数索引 (如 -1) 替换为 0
              safe_qids = qids.long()
              safe_qids = torch.where(safe_qids >= 0, safe_qids, torch.zeros_like(safe_qids))
              safe_qids = torch.clamp(safe_qids, 0, self.num_q - 1)
-             return self.QEmbs(safe_qids)
+             v_qid = self.QEmbs(safe_qids) # (batch, seq, 200)
+
+        # 2. 获取 Visual Feature (1024 -> 200 dim)
+        v_visual = None
+        if self.visual_encoder is not None and self.visual_projector is not None:
+            # 使用多模态编码器提取原生特征 (batch, seq, 1024)
+            v_raw, _ = self.visual_encoder(qids, self.img_path_dict, return_kc=False)
+            # 投影降维
+            v_visual = self.visual_projector(v_raw) # (batch, seq, 200)
+        elif self.use_visual and self.visual_projector is not None:
+             # Visual mode but encoder logic not ready? (Fallback)
+             # Should assume visual_encoder is present if use_visual=True
+             pass
+             
+        # 3. 组合特征
+        if self.question_rep_type == 'qid':
+            return v_qid
+        elif self.question_rep_type == 'visual':
+            if v_visual is None:
+                # Fallback: Zero vector of target dim
+                return torch.zeros((qids.shape[0], seq_len, self.net_d_question), device=self.device)
+            return v_visual
+        elif self.question_rep_type == 'v&q':
+            if v_qid is None or v_visual is None:
+                 # Should not happen given init logic
+                 raise ValueError("v&q mode requires both QID and Visual features")
+            return torch.cat([v_qid, v_visual], dim=-1) # (batch, seq, 400)
             
-        # 2. 如果是 Visual 模式
-        if not self.use_visual or self.visual_encoder is None:
-            # 如果不使用视觉特征，返回零向量
-            batch_size = qids.shape[0]
-            v_t = torch.zeros(
-                (batch_size, seq_len, self.d_question),
-                device=self.device
-            )
-            return v_t
-        
-        # 使用多模态编码器提取特征（不再预测知识点分布）
-        v_t, _ = self.visual_encoder(
-            qids,
-            self.img_path_dict,
-            return_kc=False
-        )
-        
-        return v_t
+        return v_qid # Fallback
     
     def _get_cot_embeddings(
         self,

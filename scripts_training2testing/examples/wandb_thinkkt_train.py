@@ -58,8 +58,8 @@ parser.add_argument("--use_cot", type=int, default=0,
                    help="是否使用CoT (0/1，当前版本为0)")
 parser.add_argument("--use_visual", type=int, default=1,
                    help="是否使用视觉特征 (0/1)")
-parser.add_argument("--question_rep_type", type=str, default="visual", choices=["visual", "qid"],
-                   help="题目表征来源: 'visual' (VLM) 或 'qid' (ID Embedding，完全复刻CRKT)")
+parser.add_argument("--question_rep_type", type=str, default="visual", choices=["visual", "qid", "v&q"],
+                   help="题目表征来源: 'visual', 'qid' 或 'v&q'")
 parser.add_argument("--cache_dir", type=str, default="features",
                    help="特征缓存目录")
 parser.add_argument("--cot_cache_dir", type=str, default="cot_cache",

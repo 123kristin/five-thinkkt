@@ -212,3 +212,54 @@ ThinkKT 强化学习版本
     通过阈值设定为2来控制)
 改进3：
 发现输出预测头不对，把基础班thinkkt模型改成与CRKT类似的框架，除了输入的交互信息融合处使用的是经过千问大模型获得的题目表征，其他度一样
+
+2025-12-23
+run_parallel_datasets.sh运行实验：
+CRKT基线版本的thinkkt，除了一个线性层，其他与CRKT一致，lstm层数可选1,2,3
+视觉基线版本的thinkkt，用大模型获得的题目表征替换了CRKT版本中的题目id编码，lstm层数可选1,2,3
+以上两组实验并行
+保存在saved_model/direct_concat/crkt_baseline中
+run_rule_cot_experiments.sh运行实验：
+CRKT+CoT版本的thinkkt，加上基于规则策略的思维链，即设置阈值为2，lstm层数可选1,2,3
+视觉基线版本的thinkkt，加上基于规则策略的思维链，即设置阈值为2，lstm层数可选1,2,3
+以上实验串行，因为并行会导致生成的思维链缓存冲突
+保存在saved_model/crkt_cot_rule中
+现在需要做的事是：
+等所有思维链缓存生成完毕，看模型性能，以及添加强化学习，再看模型性能
+bash run_parallel_datasets.sh完成后，
+crkt_baseline和visual_baseline移动到direct_concat文件夹下保存
+而crkt_cot_rule则继续生成思维链供后续使用
+
+下午：
+实验结果发现，由于添加了这个线性融合层，DBE的性能提升，但是XES性能降低挺多的，不到0.8的AUC甚至
+还由于直接将1024维的大模型提取的题目表征降维至200再拼接，也有可能导致XES性能下降
+所以修改：
+原本id表征的d_question维度改回200，确保完全复刻CRKT；
+将大模型获得的题目表征先降维至200，再对题目id表征替换；
+将大模型获得的题目表征先降维至200，再和题目id表征拼接，而不是替换；
+这里就需要将参数--question_rep_type设置为["visual", "qid", "v&q"]；
+代码适配;
+然后写一个脚本用来运行以下实验：
+3个数据集，3个显卡，CRKT复刻版本thinkkt，视觉替换版本thinkkt，视觉拼接版本thinkkt，lstm层数可选1，2,3；
+日志保存到bs_logs文件夹下，训练最佳模型保存到bs_qid,bs_visual,bs_v&q文件夹下
+先不管思维链和强化学习的实验。
+git add .
+git commit -m "true bs"
+git push
+bash run_bs_experiments.sh
+
+晚上：
+先等run_rule_cot_experiments.sh运行完毕，才能生成思维链缓存
+思维链如何生成？
+    1.基于规则策略，即设定阈值2
+    2.基于元选择什么的策略
+思维链如何利用到thinkkt模型中？
+1.直接从384降维至200与输入拼接
+2.CoT 引导的知识门控 (CoT-Guided Knowledge Gate)
+    具体设计：
+    在 LSTM 内部更新公式中，引入一个由 CoT 动态生成的 “推理置信度门 (Reasoning Gate)” $g_{cot}$。
+
+    计算门控信号： $$g_{cot} = \sigma(W_g \cdot \text{Projector}(CoT_t) + b_g)$$
+    这个 $g_{cot}$ (范围 0~1) 代表了模型认为当前这道题的推理逻辑提供了多大的“信息增益”。
+    调节状态更新： 传统的 LSTM 遗忘门/输入门大致是基于 $x_t$ 和 $h_{t-1}$ 计算的。 我们可以显式地用 $g_{cot}$ 去增强输入门 (Input Gate)： $$i_t' = i_t \cdot (1 + \lambda \cdot g_{cot})$$
+    直观解释：如果 CoT 质量很高（逻辑清晰），$g_{cot}$ 较大，Input Gate 被放大，不仅这道题的信息被更多地写入知识状态，而且模型“更确信”这次知识点的掌握情况发生了变化。

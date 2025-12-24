@@ -111,17 +111,41 @@ class ThinkKTNet(nn.Module):
         self.prediction_mode = config.get('prediction_mode', 'vector') # Default to Vector to match CRKT
         
         # 知识点嵌入维度（与题目特征维度一致，用于知识点平均嵌入）
-        self.dim_qc = self.d_question  # 知识点嵌入维度
+        # 知识点嵌入维度（强制固定为 200，为了与 CRKT 对齐）
+        self.dim_qc = 200  # 知识点嵌入维度
         self.KCEmbs = nn.Embedding(self.num_c, self.dim_qc)  # 知识点嵌入
         
         # 计算融合后的输入维度
-        # 不使用CoT: v_t (d_question) + kc_avg_embs (dim_qc) + zero_vector (dim_qc * 2)
-        # 使用CoT: v_t (d_question) + r_embed (d_cot) + kc_avg_embs (dim_qc) + zero_vector (dim_qc * 2)
-        d_input = self.d_question + self.dim_qc + self.dim_qc * 2
-        if self.use_cot:
-            d_input += self.d_cot
+        # 逻辑：总输入 = (题目特征 + 知识点) * 2 (补零用于区分答对/答错)
+        # d_question 来自外部传入 (200 for QID/Visual, 400 for V&Q)
+        d_feat_kc = self.d_question + self.dim_qc
+        d_input = d_feat_kc * 2
         
-        # 特征融合层
+        if self.use_cot:
+            d_input += self.d_cot # CoT 只是增加宽度，不参与 shift 逻辑的对称性? 
+            # 原始代码 cot 是插入在中间的: [v, r_cot, kc, 0]
+            # 那么 zero vector 应该是 d_question + d_cot + dim_qc?
+            # 原始代码 zero vector 是 dim_qc * 2. 
+            # 让我们保持简单：如果 use_cot，直接加。
+            # 但 zero vector 大小必须调整以匹配 shift?
+            # 检查 forward 逻辑：
+            # correct: [v, r, kc, zero].  wrong: [zero, v, r, kc].
+            # 那么 zero 必须等于 len(v) + len(r) + len(kc).
+            # 所以 d_feat_kc 应该包括 d_cot.
+            # d_feat_kc = self.d_question + self.d_cot + self.dim_qc
+            pass
+
+        if self.use_cot:
+             d_feat_kc_cot = self.d_question + self.d_cot + self.dim_qc
+             d_input = d_feat_kc_cot * 2
+        
+        # 特征融合层 (Fusion Layer)
+        # 策略：根据最新需求，这三个实验（bs_qid, bs_visual, bs_v&q）都应移除 Fusion Layer
+        # 我们默认关闭它，除非未来显式开启
+        self.use_fusion_layer_flag = False 
+        
+        # 仅当显式要求开启时（例如旧配置），这里我们为了复刻实验强制设为 False
+        # 并让 LSTM 直接接受 d_input
         self.fusion_layer = nn.Sequential(
             nn.Linear(d_input, self.d_knowledge),
             nn.LayerNorm(self.d_knowledge),
@@ -143,10 +167,23 @@ class ThinkKTNet(nn.Module):
                 num_layers=num_layers,
                 activation='gelu'
             )
+            if not self.use_fusion_layer_flag:
+                 # LSTM 直接使用 d_input
+                 lstm_input_size = d_input
+                 print(f"[ThinkKTNet] Fusion Layer DISABLED. LSTM Input Size = {lstm_input_size}")
+            else:
+                 lstm_input_size = self.d_knowledge
+                 
         elif self.seq_model_type == 'lstm':
             num_layers = config.get('num_lstm_layers', 2)
+            if not self.use_fusion_layer_flag:
+                 lstm_input_size = d_input
+                 print(f"[ThinkKTNet] Fusion Layer DISABLED. LSTM Input Size = {lstm_input_size}")
+            else:
+                 lstm_input_size = self.d_knowledge
+
             self.seq_model = nn.LSTM(
-                input_size=self.d_knowledge,
+                input_size=lstm_input_size,
                 hidden_size=self.d_knowledge,
                 num_layers=num_layers,
                 batch_first=True,
@@ -251,20 +288,24 @@ class ThinkKTNet(nn.Module):
         kc_avg_embs = self.get_kc_avg_emb(c)  # (batch_size, seq_len, dim_qc)
         
         # 2. 创建零向量
-        zero_vector = torch.zeros(batch_size, seq_len, self.dim_qc * 2, device=device)
+        # 必须匹配 (v + [cot] + kc) 的总长度
+        feat_len = self.d_question + self.dim_qc
+        if self.use_cot:
+            feat_len += self.d_cot
+            
+        zero_vector = torch.zeros(batch_size, seq_len, feat_len, device=device)
         
-        # 3. 根据答对/答错拼接输入（类似CRKT）
-        # 答对时（r==1）：[v_t, kc_avg_embs, zero_vector]
-        # 答错时（r==0）：[zero_vector, v_t, kc_avg_embs]
+        # 3. 根据答对/答错拼接输入（CRKT Shift Logic）
         if self.use_cot and r_embed is not None:
             r_embed = r_embed.to(device)
-            # 如果有CoT，将其插入到中间位置
-            # 答对：[v_t, r_embed, kc_avg_embs, zero_vector]
-            # 答错：[zero_vector, v_t, r_embed, kc_avg_embs]
+            # 答对：[v_t, r_embed, kc, zero]
             correct_input = torch.cat([v_t, r_embed, kc_avg_embs, zero_vector], dim=-1)
+            # 答错：[zero, v_t, r_embed, kc]
             wrong_input = torch.cat([zero_vector, v_t, r_embed, kc_avg_embs], dim=-1)
         else:
+            # 答对：[v_t, kc, zero]
             correct_input = torch.cat([v_t, kc_avg_embs, zero_vector], dim=-1)
+            # 答错：[zero, v_t, kc]
             wrong_input = torch.cat([zero_vector, v_t, kc_avg_embs], dim=-1)
         
         # 使用掩码选择答对/答错的输入

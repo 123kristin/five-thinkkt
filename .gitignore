@@ -216,4 +216,7 @@ scripts_training2testing/examples/experiment_input_logs/
 scripts_training2testing/examples/cot_cache/
 scripts_training2testing/examples/cot_cache_global/
 logs/
+bs_logs/
 cot_logs/
+scripts_training2testing/examples/cot_logs/
+scripts_training2testing/examples/bs_logs/
