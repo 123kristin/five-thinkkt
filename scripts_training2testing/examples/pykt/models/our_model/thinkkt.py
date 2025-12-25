@@ -247,6 +247,33 @@ class ThinkKT(nn.Module):
             print(f"[ThinkKT] Using Rule-based Threshold: {self.cot_threshold}")
         # ----------------
         
+        # --- 显存优化：共享模型加载 ---
+        # 如果同时开启了 Visual 和 CoT，则预加载大模型并共享实例，避免双重加载导致 OOM
+        shared_model = None
+        shared_processor = None
+        
+        if self.use_visual and self.use_cot:
+            print("[ThinkKT] 检测到 Visual 和 CoT 同时开启。为了节省显存，正在预加载共享大模型(Qwen2-VL)...")
+            try:
+                from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+                mllm_path = config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct')
+                
+                print(f"[ThinkKT] Loading shared model from {mllm_path}...")
+                print(f"[ThinkKT] Device: {self.device}")
+                
+                # Load with optimization
+                shared_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                    mllm_path,
+                    torch_dtype=torch.float16,
+                    device_map=self.device
+                )
+                shared_processor = AutoProcessor.from_pretrained(mllm_path)
+                print("[ThinkKT] 共享模型加载成功。")
+            except Exception as e:
+                print(f"[ThinkKT] 警告: 共享模型加载失败 ({e})。将尝试独立加载（注意：可能导致显存不足）。")
+                shared_model = None
+                shared_processor = None
+        # ----------------------------        
         # 初始化多模态编码器
         if self.use_visual:
             print(f"[ThinkKT] 正在初始化多模态编码器...")
@@ -262,7 +289,9 @@ class ThinkKT(nn.Module):
                 cache_dir=config.get('cache_dir', 'features'),
                 dataset_name=self.dataset_name,
                 use_cache=True,
-                device=self.device
+                device=self.device,
+                shared_model=shared_model,
+                shared_processor=shared_processor
             )
             
             # 构建问题ID到图片路径的映射
@@ -290,7 +319,9 @@ class ThinkKT(nn.Module):
                     cache_dir=config.get('cot_cache_dir', 'cot_cache'),
                     device=self.device,
                     use_cache=True,
-                    dataset_name=self.dataset_name
+                    dataset_name=self.dataset_name,
+                    shared_model=shared_model,
+                    shared_processor=shared_processor
                 )
                 print(f"[ThinkKT] CoT 生成器初始化完成")
                 sys.stdout.flush()

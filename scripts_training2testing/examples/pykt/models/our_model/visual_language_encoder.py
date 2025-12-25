@@ -60,7 +60,9 @@ class VisualLanguageEncoder(nn.Module):
         cache_dir: Optional[str] = None,
         dataset_name: Optional[str] = None,
         use_cache: bool = True,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        shared_model = None, # 共享的大模型实例
+        shared_processor = None # 共享的处理器实例
     ):
         """
         初始化多模态编码器
@@ -87,11 +89,18 @@ class VisualLanguageEncoder(nn.Module):
         self.dataset_name = dataset_name
         self.use_cache = use_cache
         
-        # 初始化视觉模型（延迟加载）
-        self.vision_model = None
-        self.vision_processor_tokenizer = None
+        # 初始化视觉模型（延迟加载或使用共享）
+        if shared_model is not None:
+            self.vision_model = shared_model
+            self.vision_processor_tokenizer = shared_processor
+            self._vision_model_loaded = True
+            print("[VisualLanguageEncoder] 使用共享的 Qwen2-VL 模型实例")
+        else:
+            self.vision_model = None
+            self.vision_processor_tokenizer = None
+            self._vision_model_loaded = False
+        
         self.model_path = model_path
-        self._vision_model_loaded = False
         
         # 知识点分类头
         self.kc_classifier = nn.Sequential(

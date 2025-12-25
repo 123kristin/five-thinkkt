@@ -56,12 +56,8 @@ def main(params):
         if model_name in ["dtransformer"]:
             train_config["batch_size"] = 32 ## because of OOM
         if model_name in ["thinkkt"]:
-            # Visual mode needs more memory, restrict to 32. QID mode can use larger batch (64).
-            # Check params for visual config
-            q_type = params.get("question_rep_type", "visual")
-            if q_type in ["visual", "v&q"]:
-                train_config["batch_size"] = 32
-            # else: keep default (usually 64)
+            # Unify batch size to 32 for all modes (qid, visual, v&q) as requested
+            train_config["batch_size"] = 32
         model_config = copy.deepcopy(params)
         for key in ["model_name", "emb_type", "save_dir", "fold", "seed"]:
             del model_config[key]

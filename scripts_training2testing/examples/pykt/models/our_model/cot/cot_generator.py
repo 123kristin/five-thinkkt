@@ -60,7 +60,9 @@ class CoTGenerator(nn.Module):
         cache_dir: Optional[str] = None,
         device: Optional[torch.device] = None,
         use_cache: bool = True,
-        dataset_name: Optional[str] = None
+        dataset_name: Optional[str] = None,
+        shared_model = None, # 共享的大模型实例
+        shared_processor = None # 共享的处理器实例
     ):
         """
         初始化 CoT 生成器
@@ -73,6 +75,8 @@ class CoTGenerator(nn.Module):
             device: 设备
             use_cache: 是否使用缓存
             dataset_name: 数据集名称（用于语言检测和提示词优化）
+            shared_model: 共享的大模型实例
+            shared_processor: 共享的处理器实例
         """
         super(CoTGenerator, self).__init__()
         
@@ -88,10 +92,16 @@ class CoTGenerator(nn.Module):
         self.use_cache = use_cache
         self.dataset_name = dataset_name
         
-        # 初始化 MLLM（延迟加载）
-        self.mllm_model = None
-        self.mllm_processor = None
-        self._mllm_loaded = False
+        # 初始化 MLLM（延迟加载或使用共享）
+        if shared_model is not None:
+            self.mllm_model = shared_model
+            self.mllm_processor = shared_processor
+            self._mllm_loaded = True
+            print("[CoTGenerator] 使用共享的 Qwen2-VL 模型实例")
+        else:
+            self.mllm_model = None
+            self.mllm_processor = None
+            self._mllm_loaded = False
         
         # 初始化文本编码器（延迟加载）
         self.text_encoder = None
