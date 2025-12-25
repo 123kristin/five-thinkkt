@@ -85,7 +85,7 @@ run_type_experiments() {
                         --save_dir "$CKPT_PATH" \
                         --gpu_id "$GPU_ID" \
                         --use_wandb 0 \
-                        --bz 4 \
+                        --bz 1 \
                         >> "../../$LOG_FILE" 2>&1
                  else
                      echo "Error: Could not find Checkpoint Path in log file!" >> "../../$LOG_FILE"
