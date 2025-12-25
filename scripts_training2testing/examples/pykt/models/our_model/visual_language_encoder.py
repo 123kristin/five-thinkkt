@@ -164,13 +164,9 @@ class VisualLanguageEncoder(nn.Module):
                 trust_remote_code=True,
                 use_fast=False  # 避免警告，使用slow processor
             )
-            self.vision_model.eval()  # Set to eval mode
-            # IMPROTANT: Freeze parameters to avoid OOM during training
-            for param in self.vision_model.parameters():
-                param.requires_grad = False
-            
+            self.vision_model.eval()  # 设置为评估模式
             self._vision_model_loaded = True
-            print(f"[VisualLanguageEncoder] 视觉模型加载完成 (Frozen)")
+            print(f"[VisualLanguageEncoder] 视觉模型加载完成")
         except Exception as e:
             raise RuntimeError(f"加载视觉模型失败: {e}")
     
@@ -443,86 +439,53 @@ class VisualLanguageEncoder(nn.Module):
         batch_size, seq_len = qids.shape
         device = qids.device
         
-        if self.training:
-            # Training Mode: Use efficient batch processing (Batch Size controls memory)
-            # Flatten qids
-            qids_flat = qids_cpu.reshape(-1).astype(int)
-            get_path = img_path_dict.get
-            
-            pairs = [
-                (get_path(q), q) if q in img_path_dict else (None, -1)
-                for q in qids_flat
-            ]
-            
-            if pairs:
-                img_paths, qids_list = zip(*pairs)
-            else:
-                img_paths, qids_list = [], []
-            
-            valid_indices = [i for i, path in enumerate(img_paths) if path is not None]
-            
-            if valid_indices:
-                valid_paths = [img_paths[i] for i in valid_indices]
-                valid_qids = [qids_list[i] for i in valid_indices]
-                valid_features = self.encode_batch(valid_paths, valid_qids)
-            else:
-                valid_features = torch.zeros((0, self.d_question), device=self.device)
-            
-            v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
-            
-            if valid_indices:
-                valid_indices_tensor = torch.tensor(valid_indices, device=device, dtype=torch.long)
-                batch_indices = valid_indices_tensor // seq_len
-                seq_indices = valid_indices_tensor % seq_len
-                valid_features = valid_features.to(device)
-                v_t[batch_indices, seq_indices] = valid_features
-                
+        # 将qids移到CPU进行路径查找
+        qids_cpu = qids.cpu().numpy()
+        
+        # 获取图片路径
+        # Optimization: Flatten loops for speed
+        qids_flat = qids_cpu.reshape(-1).astype(int)
+        
+        # 使用列表推导式快速查表 (Python loop over 12k items is faster than nested loop)
+        # 预取 get 方法
+        get_path = img_path_dict.get
+        
+        pairs = [
+            (get_path(q), q) if q in img_path_dict else (None, -1)
+            for q in qids_flat
+        ]
+        
+        # 解包 (如果 pairs 为空处理起来要小心，但 batch_size > 0)
+        if pairs:
+            img_paths, qids_list = zip(*pairs)
         else:
-            # Evaluation Mode: Use Chunking to handle extreme sequence lengths (OOM protection)
-            v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
+            img_paths, qids_list = [], []
+        
+        # 批量编码（跳过None路径）
+        valid_indices = [i for i, path in enumerate(img_paths) if path is not None]
+        if valid_indices:
+            valid_paths = [img_paths[i] for i in valid_indices]
+            valid_qids = [qids_list[i] for i in valid_indices]
+            valid_features = self.encode_batch(valid_paths, valid_qids)
+        else:
+            valid_features = torch.zeros((0, self.d_question), device=self.device)
+        
+        # 构建完整特征矩阵
+        v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
+        
+        if valid_indices:
+            # 向量化填充：避免Python循环
+            # valid_features 已经在 self.device 上
+            # 计算对应的 (b, s) 索引
+            valid_indices_tensor = torch.tensor(valid_indices, device=device, dtype=torch.long)
+            batch_indices = valid_indices_tensor // seq_len
+            seq_indices = valid_indices_tensor % seq_len
             
-            # Flatten qids for chunking
-            qids_flat = qids_cpu.reshape(-1).astype(int)
-            total_items = len(qids_flat)
-            chunk_size_forward = 128 # Process 128 items at a time
-            
-            get_path = img_path_dict.get
-            
-            for i in range(0, total_items, chunk_size_forward):
-                chunk_indices = range(i, min(i + chunk_size_forward, total_items))
-                current_qids = qids_flat[chunk_indices]
-                
-                pairs = [
-                    (get_path(q), q) if q in img_path_dict else (None, -1)
-                    for q in current_qids
-                ]
-                
-                if pairs:
-                    img_paths, qids_list = zip(*pairs)
-                else:
-                    img_paths, qids_list = [], []
-                    
-                valid_chunk_indices = [idx for idx, path in enumerate(img_paths) if path is not None]
-                
-                if valid_chunk_indices:
-                    valid_paths = [img_paths[idx] for idx in valid_chunk_indices]
-                    valid_qids = [qids_list[idx] for idx in valid_chunk_indices]
-                    valid_features = self.encode_batch(valid_paths, valid_qids)
-                    
-                    # Assign to v_t
-                    global_valid_indices = [chunk_indices[idx] for idx in valid_chunk_indices]
-                    global_indices_tensor = torch.tensor(global_valid_indices, device=device, dtype=torch.long)
-                    
-                    batch_indices = global_indices_tensor // seq_len
-                    seq_indices = global_indices_tensor % seq_len
-                    
-                    valid_features = valid_features.to(device)
-                    v_t[batch_indices, seq_indices] = valid_features
-                    
-                # Clear cache to free fragmented memory from Qwen inference
-                if i % (chunk_size_forward * 4) == 0:
-                     torch.cuda.empty_cache()
-
+            # 一次性且直接在GPU上赋值
+            # 确保 valid_features 和 v_t 在同一设备
+            valid_features = valid_features.to(device)
+            v_t[batch_indices, seq_indices] = valid_features
+        
         # 预测知识点分布
         k_t = None
         if return_kc:
@@ -545,16 +508,6 @@ class VisualLanguageEncoder(nn.Module):
         
         # 注意：视觉处理器保持原设备（通常已经通过device_map="auto"加载）
         
-        return self
-
-    def train(self, mode: bool = True):
-        """
-        重写 train 方法:
-        确保底层视觉模型始终处于 eval 模式 (Frozen)
-        """
-        super().train(mode)
-        if self._vision_model_loaded and self.vision_model is not None:
-            self.vision_model.eval()
         return self
 
 
