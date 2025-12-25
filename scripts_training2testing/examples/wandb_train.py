@@ -56,8 +56,9 @@ def main(params):
         if model_name in ["dtransformer"]:
             train_config["batch_size"] = 32 ## because of OOM
         if model_name in ["thinkkt"]:
-            # Unify batch size to 32 for all modes (qid, visual, v&q) as requested
-            train_config["batch_size"] = 32
+            # User confirmed 64 works for training (even v&q). Prediction is handled separately (bz=4).
+            train_config["batch_size"] = 64
+            # else: keep default (usually 64)
         model_config = copy.deepcopy(params)
         for key in ["model_name", "emb_type", "save_dir", "fold", "seed"]:
             del model_config[key]
