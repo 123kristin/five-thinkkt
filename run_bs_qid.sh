@@ -41,7 +41,6 @@ run_dataset_experiments() {
                 --use_cot 0 \
                 --use_visual 0 \
                 --num_epochs 200 \
-                --batch_size 64 \
                 --use_wandb 0 \
                  >> "../../$LOG_FILE" 2>&1
              
@@ -79,18 +78,16 @@ run_dataset_experiments() {
 }
 
 # 并行运行三个数据集 (GPU分配: 0, 1, 2)
+# 注意：数据集名称必须与 data_config.json 中的键完全匹配 (区分大小写)
 
-# GPU 0: XES3G5M
-run_dataset_experiments "xes3g5m" 0 &
+# GPU 0: XES3G5M (注意全大写)
+run_dataset_experiments "XES3G5M" 0 &
 
-# GPU 1: DBE_KT22
-run_dataset_experiments "dbe_kt22" 1 &
+# GPU 1: DBE_KT22 (注意全大写)
+run_dataset_experiments "DBE_KT22" 1 &
 
-# GPU 2: Eedi (NIPS_task34)
-# 注意：Eedi 数据集在某些代码中可能被称为 nips_task34，请根据实际情况确认
-# 根据 run_bs_qid.sh 原文使用的是 'eedi'，但 run_bs_experiments.sh 使用 'nips_task34'
-# 我们这里保持与原脚本一致 'eedi'，但若有问题请尝试 'nips_task34'
-run_dataset_experiments "eedi" 2 &
+# GPU 2: nips_task34 (注意小写，data_config中key为nips_task34)
+run_dataset_experiments "nips_task34" 2 &
 
 # 等待所有后台任务完成
 echo "All QID experiments launched in parallel. Waiting for completion..."
