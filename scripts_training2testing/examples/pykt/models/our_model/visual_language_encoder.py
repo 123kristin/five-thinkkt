@@ -164,9 +164,13 @@ class VisualLanguageEncoder(nn.Module):
                 trust_remote_code=True,
                 use_fast=False  # 避免警告，使用slow processor
             )
-            self.vision_model.eval()  # 设置为评估模式
+            self.vision_model.eval()  # Set to eval mode
+            # IMPROTANT: Freeze parameters to avoid OOM during training
+            for param in self.vision_model.parameters():
+                param.requires_grad = False
+            
             self._vision_model_loaded = True
-            print(f"[VisualLanguageEncoder] 视觉模型加载完成")
+            print(f"[VisualLanguageEncoder] 视觉模型加载完成 (Frozen)")
         except Exception as e:
             raise RuntimeError(f"加载视觉模型失败: {e}")
     
@@ -541,6 +545,16 @@ class VisualLanguageEncoder(nn.Module):
         
         # 注意：视觉处理器保持原设备（通常已经通过device_map="auto"加载）
         
+        return self
+
+    def train(self, mode: bool = True):
+        """
+        重写 train 方法:
+        确保底层视觉模型始终处于 eval 模式 (Frozen)
+        """
+        super().train(mode)
+        if self._vision_model_loaded and self.vision_model is not None:
+            self.vision_model.eval()
         return self
 
 
