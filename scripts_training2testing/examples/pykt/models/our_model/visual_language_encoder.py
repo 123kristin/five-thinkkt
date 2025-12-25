@@ -439,51 +439,85 @@ class VisualLanguageEncoder(nn.Module):
         batch_size, seq_len = qids.shape
         device = qids.device
         
-        # Chunked processing to prevent OOM
-        v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
-        
-        # Flatten qids for chunking
-        qids_flat = qids_cpu.reshape(-1).astype(int)
-        total_items = len(qids_flat)
-        chunk_size_forward = 128 # Process 128 items at a time
-        
-        get_path = img_path_dict.get
-        
-        for i in range(0, total_items, chunk_size_forward):
-            chunk_indices = range(i, min(i + chunk_size_forward, total_items))
-            current_qids = qids_flat[chunk_indices]
+        if self.training:
+            # Training Mode: Use efficient batch processing (Batch Size controls memory)
+            # Flatten qids
+            qids_flat = qids_cpu.reshape(-1).astype(int)
+            get_path = img_path_dict.get
             
             pairs = [
                 (get_path(q), q) if q in img_path_dict else (None, -1)
-                for q in current_qids
+                for q in qids_flat
             ]
             
             if pairs:
                 img_paths, qids_list = zip(*pairs)
             else:
                 img_paths, qids_list = [], []
-                
-            valid_chunk_indices = [idx for idx, path in enumerate(img_paths) if path is not None]
             
-            if valid_chunk_indices:
-                valid_paths = [img_paths[idx] for idx in valid_chunk_indices]
-                valid_qids = [qids_list[idx] for idx in valid_chunk_indices]
+            valid_indices = [i for i, path in enumerate(img_paths) if path is not None]
+            
+            if valid_indices:
+                valid_paths = [img_paths[i] for i in valid_indices]
+                valid_qids = [qids_list[i] for i in valid_indices]
                 valid_features = self.encode_batch(valid_paths, valid_qids)
-                
-                # Assign to v_t
-                # Calculate global indices
-                global_valid_indices = [chunk_indices[idx] for idx in valid_chunk_indices]
-                global_indices_tensor = torch.tensor(global_valid_indices, device=device, dtype=torch.long)
-                
-                batch_indices = global_indices_tensor // seq_len
-                seq_indices = global_indices_tensor % seq_len
-                
+            else:
+                valid_features = torch.zeros((0, self.d_question), device=self.device)
+            
+            v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
+            
+            if valid_indices:
+                valid_indices_tensor = torch.tensor(valid_indices, device=device, dtype=torch.long)
+                batch_indices = valid_indices_tensor // seq_len
+                seq_indices = valid_indices_tensor % seq_len
                 valid_features = valid_features.to(device)
                 v_t[batch_indices, seq_indices] = valid_features
                 
-            # Clear cache to free fragmented memory from Qwen inference
-            if i % (chunk_size_forward * 4) == 0:
-                 torch.cuda.empty_cache()
+        else:
+            # Evaluation Mode: Use Chunking to handle extreme sequence lengths (OOM protection)
+            v_t = torch.zeros((batch_size, seq_len, self.d_question), device=device)
+            
+            # Flatten qids for chunking
+            qids_flat = qids_cpu.reshape(-1).astype(int)
+            total_items = len(qids_flat)
+            chunk_size_forward = 128 # Process 128 items at a time
+            
+            get_path = img_path_dict.get
+            
+            for i in range(0, total_items, chunk_size_forward):
+                chunk_indices = range(i, min(i + chunk_size_forward, total_items))
+                current_qids = qids_flat[chunk_indices]
+                
+                pairs = [
+                    (get_path(q), q) if q in img_path_dict else (None, -1)
+                    for q in current_qids
+                ]
+                
+                if pairs:
+                    img_paths, qids_list = zip(*pairs)
+                else:
+                    img_paths, qids_list = [], []
+                    
+                valid_chunk_indices = [idx for idx, path in enumerate(img_paths) if path is not None]
+                
+                if valid_chunk_indices:
+                    valid_paths = [img_paths[idx] for idx in valid_chunk_indices]
+                    valid_qids = [qids_list[idx] for idx in valid_chunk_indices]
+                    valid_features = self.encode_batch(valid_paths, valid_qids)
+                    
+                    # Assign to v_t
+                    global_valid_indices = [chunk_indices[idx] for idx in valid_chunk_indices]
+                    global_indices_tensor = torch.tensor(global_valid_indices, device=device, dtype=torch.long)
+                    
+                    batch_indices = global_indices_tensor // seq_len
+                    seq_indices = global_indices_tensor % seq_len
+                    
+                    valid_features = valid_features.to(device)
+                    v_t[batch_indices, seq_indices] = valid_features
+                    
+                # Clear cache to free fragmented memory from Qwen inference
+                if i % (chunk_size_forward * 4) == 0:
+                     torch.cuda.empty_cache()
 
         # 预测知识点分布
         k_t = None
