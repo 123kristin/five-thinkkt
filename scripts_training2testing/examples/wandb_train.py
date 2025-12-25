@@ -56,8 +56,11 @@ def main(params):
         if model_name in ["dtransformer"]:
             train_config["batch_size"] = 32 ## because of OOM
         if model_name in ["thinkkt"]:
-            # User confirmed 64 works for training (even v&q). Prediction is handled separately (bz=4).
-            train_config["batch_size"] = 64
+            # Reverting: 64 causes OOM for visual/v&q. Restricting strict memory modes to 32.
+            q_type = params.get("question_rep_type", "visual")
+            if q_type in ["visual", "v&q"]:
+                train_config["batch_size"] = 32
+            # else: keep default (usually 64)
             # else: keep default (usually 64)
         model_config = copy.deepcopy(params)
         for key in ["model_name", "emb_type", "save_dir", "fold", "seed"]:
