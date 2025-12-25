@@ -42,7 +42,7 @@ run_dataset_experiments() {
                 --use_visual 0 \
                 --num_epochs 200 \
                 --batch_size 64 \
-                --use_wandb 1 \
+                --use_wandb 0 \
                  >> "../../$LOG_FILE" 2>&1
              
              train_exit_code=$?
@@ -58,7 +58,7 @@ run_dataset_experiments() {
                      python wandb_predict.py \
                         --save_dir "$CKPT_PATH" \
                         --gpu_id "$GPU_ID" \
-                        --use_wandb 1 \
+                        --use_wandb 0 \
                         --bz 128 \
                         >> "../../$LOG_FILE" 2>&1
                         
