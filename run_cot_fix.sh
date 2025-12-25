@@ -74,7 +74,7 @@ run_experiment_on_gpu() {
          CKPT_PATH=$(grep "模型目录: " "../../$LOG_FILE" | tail -n 1 | awk '{print $2}')
          if [ ! -z "$CKPT_PATH" ]; then
              echo "Training Finished. Found Checkpoint: $CKPT_PATH" >> "../../$LOG_FILE"
-             python wandb_predict.py --save_dir "$CKPT_PATH" --gpu_id "$GPU_ID" --bz 4 --use_wandb 0 >> "../../$LOG_FILE" 2>&1
+             python wandb_predict.py --save_dir "$CKPT_PATH" --gpu_id "$GPU_ID" --bz 1 --use_wandb 0 >> "../../$LOG_FILE" 2>&1
          fi
         )
     fi
@@ -134,7 +134,7 @@ run_experiment_on_gpu() {
              CKPT_PATH=$(grep "模型目录: " "../../$LOG_FILE" | tail -n 1 | awk '{print $2}')
              if [ ! -z "$CKPT_PATH" ]; then
                  echo "Training Finished. Checkpoint: $CKPT_PATH" >> "../../$LOG_FILE"
-                 python wandb_predict.py --save_dir "$CKPT_PATH" --gpu_id "$GPU_ID" --bz 4 --use_wandb 0 >> "../../$LOG_FILE" 2>&1
+                 python wandb_predict.py --save_dir "$CKPT_PATH" --gpu_id "$GPU_ID" --bz 1 --use_wandb 0 >> "../../$LOG_FILE" 2>&1
              fi
             )
         done
