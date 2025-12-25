@@ -205,8 +205,9 @@ class ThinkKT(nn.Module):
             self.net_d_question = self.d_question # Fallback
             
         # Override config for ThinkKTNet
-        print(f"[ThinkKT] Overriding d_question for Inner Net: {self.net_d_question}")
-        config['d_question'] = self.net_d_question
+        # FIX: Do NOT mutate config in place as it affects subsequent initializations (e.g. best_model)
+        # config['d_question'] = self.net_d_question
+        print(f"[ThinkKT] Inner Net d_question: {self.net_d_question}")
         
         # 设备管理（与CRKT一致）
         if torch.cuda.is_available():
@@ -232,6 +233,7 @@ class ThinkKT(nn.Module):
         self.dataset_name = config.get('dataset_name', 'DBE_KT22')
         
         # 模型配置
+        # self.d_question refers to the provided argument (e.g. 200 for QID/Visual projection target)
         self.d_question = config.get('d_question', 1024)
         self.d_cot = config.get('d_cot', 384)
         self.use_cot = config.get('use_cot', False)  # 初始版本先不使用CoT
@@ -241,7 +243,7 @@ class ThinkKT(nn.Module):
         # CoT配置
         # --- 新增配置 ---
         self.cot_threshold = config.get('cot_threshold', 2) # 稀疏策略阈值
-        self.adaptive_strategy = config.get('adaptive_strategy', 'rule') # 策略模式: 'rule' (规则) 或 'learnable' (RL网络)
+        self.adaptive_strategy = config.get('adaptive_strategy', 'rule') # 策略模式: 'rule' (基于阈值) 或 'learnable' (RL网络)
         print(f"[ThinkKT] Adaptive Strategy: {self.adaptive_strategy}")
         if self.adaptive_strategy == 'rule':
             print(f"[ThinkKT] Using Rule-based Threshold: {self.cot_threshold}")
@@ -334,8 +336,9 @@ class ThinkKT(nn.Module):
             print(f"[ThinkKT] 警告: 知识点词表为空，CoT生成时将使用默认的知识点ID")
         
         # 初始化知识状态追踪器
+        # Use net_d_question (e.g. 400 for V&Q) for the LSTM input dimension
         kt_config = {
-            'd_question': self.d_question,
+            'd_question': self.net_d_question, 
             'd_cot': self.d_cot,
             'num_c': self.num_c,
             'd_knowledge': config.get('d_knowledge', 512),
@@ -355,7 +358,8 @@ class ThinkKT(nn.Module):
         # 这里为了简化，我们假设状态由题目特征和当前知识状态组成
         # 实际输入维度需要根据 _get_policy_state 方法的输出决定
         # 暂时设定输入维度为 d_question + d_knowledge + 1 (频次特征)
-        self.d_policy_state = self.d_question + config.get('d_knowledge', 512) + 1
+        # Use net_d_question here too
+        self.d_policy_state = self.net_d_question + config.get('d_knowledge', 512) + 1
         
         self.meta_policy_net = nn.Sequential(
             nn.Linear(self.d_policy_state, 128),
