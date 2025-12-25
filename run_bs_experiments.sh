@@ -102,14 +102,14 @@ run_type_experiments() {
 }
 
 # 并行运行三种模式
-# GPU 0: QID (All Datasets)
-run_type_experiments "qid" 0 &
+# GPU 1: QID (All Datasets)
+run_type_experiments "qid" 1 &
 
-# GPU 1: Visual (All Datasets)
-run_type_experiments "visual" 1 &
+# GPU 2: Visual (All Datasets)
+run_type_experiments "visual" 2 &
 
-# GPU 2: V&Q (All Datasets)
-run_type_experiments "v&q" 2 &
+# GPU 3: V&Q (All Datasets)
+run_type_experiments "v&q" 3 &
 
 # 等待所有后台任务完成
 wait
