@@ -20,6 +20,8 @@ import pickle
 import json
 from functools import lru_cache
 
+import atexit
+
 # 直接导入 transformers 库来使用 Qwen2.5-VL 模型
 try:
     from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
@@ -126,6 +128,10 @@ class VisualLanguageEncoder(nn.Module):
         self.cache_dir = cache_dir if cache_dir else "features"
         self.question_features_cache = {}
         self._load_feature_cache()
+        
+        # 注册退出时的保存钩子
+        if self.use_cache:
+            atexit.register(self.save_feature_cache)
     
     def _get_device(self):
         """获取设备（与CRKT一致）"""

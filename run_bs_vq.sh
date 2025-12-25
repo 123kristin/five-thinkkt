@@ -59,7 +59,7 @@ run_dataset_experiments() {
                         --save_dir "$CKPT_PATH" \
                         --gpu_id "$GPU_ID" \
                         --use_wandb 0 \
-                        --bz 128 \
+                        --bz 32 \
                         >> "../../$LOG_FILE" 2>&1
                         
                      echo "[$(date)] Prediction Finished." >> "../../$LOG_FILE"
