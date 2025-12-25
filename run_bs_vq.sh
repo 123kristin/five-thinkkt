@@ -84,11 +84,11 @@ run_dataset_experiments() {
 # GPU 0: XES3G5M
 run_dataset_experiments "XES3G5M" 0 &
 
-# GPU 1: DBE_KT22
-run_dataset_experiments "DBE_KT22" 1 &
+# GPU 2: DBE_KT22
+run_dataset_experiments "DBE_KT22" 2 &
 
-# GPU 2: nips_task34
-run_dataset_experiments "nips_task34" 2 &
+# GPU 3: nips_task34
+run_dataset_experiments "nips_task34" 3 &
 
 # 等待所有后台任务完成
 echo "All V&Q experiments launched in parallel. Waiting for completion..."
