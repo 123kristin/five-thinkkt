@@ -94,7 +94,7 @@ run_type_experiments() {
                 
                 echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=$Q_TYPE Layers=$LAYERS"
             done
-        ) & # Put dataset loop in background
+        ) # Run sequentially, not in background
     done
     
     # Wait for all datasets for this Type on this GPU
