@@ -1,6 +1,6 @@
 {
     "XES3G5M": {
-        "dpath": "/home3/zhiyu/code-5/CRKT/data/XES3G5M",
+        "dpath": "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/XES3G5M",
         "num_q": 7652,
         "num_c": 865,
         "input_type": [
@@ -30,7 +30,7 @@
         "test_file_quelevel": "question_level/test_window_sequences_quelevel.csv"
     },
     "DBE_KT22": {
-        "dpath": "/home3/zhiyu/code-5/CRKT/data/DBE_KT22/pykt_data",
+        "dpath": "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/DBE_KT22/pykt_data",
         "num_q": 212,
         "num_c": 93,
         "input_type": [
