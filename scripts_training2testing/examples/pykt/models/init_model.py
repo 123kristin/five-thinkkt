@@ -159,6 +159,11 @@ def init_model(model_name, model_config, data_config, emb_type):
         model_config['num_c'] = data_config["num_c"]
         model_config['num_q'] = data_config["num_q"]
         model = CRKT(model_config).to(device)
+    elif model_name == "vcrkt":
+        from .our_model.vcrkt import VCRKT
+        model_config['num_c'] = data_config["num_c"]
+        model_config['num_q'] = data_config["num_q"]
+        model = VCRKT(model_config).to(device)
     elif model_name == "thinkkt":
         from .our_model.thinkkt import ThinkKT
         # dataset_name 已经从 params 传递到 model_config 中，无需从 data_config 获取
