@@ -20,6 +20,28 @@ run_dataset_experiments() {
         LOG_FILE="saved_model/bs/logs/vq_${DATASET}_fold${FOLD}.log"
         
         echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=VQ Fold=$FOLD"
+        
+        # --- 断点续传检查 ---
+        ALREADY_DONE=0
+        for DIR in "../../$REL_SAVE_DIR"/*/; do
+            if [ -d "$DIR" ]; then
+                if [[ "$DIR" == *"${DATASET}_${FOLD}_"* ]]; then
+                     if ls "$DIR"/*.ckpt 1> /dev/null 2>&1; then
+                         if ls "$DIR"/predicting*.log 1> /dev/null 2>&1; then
+                             ALREADY_DONE=1
+                             break
+                         fi
+                     fi
+                fi
+            fi
+        done
+        
+        if [ $ALREADY_DONE -eq 1 ]; then
+            echo "[$(date)] Fold $FOLD already finished. Skipping..." | tee -a "$LOG_FILE"
+            continue
+        fi
+        # ------------------
+        
         echo "[$(date)] Starting Training Fold $FOLD..." > "$LOG_FILE"
         
         (
@@ -42,6 +64,24 @@ run_dataset_experiments() {
             train_exit_code=$?
             
             if [ $train_exit_code -eq 0 ]; then
+                 # 2. Predict
+                CKPT_DIR=$(ls -td "../../$REL_SAVE_DIR"/*/ | head -1)
+                
+                if [ -n "$CKPT_DIR" ]; then
+                    echo "Found checkpoint dir: $CKPT_DIR"
+                    python wandb_predict.py \
+                    --save_dir "$CKPT_DIR" \
+                    --question_rep_type "vq" \
+                    --d_question 1024 \
+                    --dim_qc 200 \
+                    --gpu_id "$GPU_ID" \
+                    --use_wandb 0
+                    
+                    echo "[$(date)] Prediction finished for Fold $FOLD." >> "../../$LOG_FILE"
+                else
+                    echo "[$(date)] Could not find checkpoint dir" >> "../../$LOG_FILE"
+                fi
+                
                 echo "[$(date)] Training process for Fold $FOLD finished." >> "../../$LOG_FILE"
             else
                 echo "[$(date)] Training Failed for Fold $FOLD with code $train_exit_code" >> "../../$LOG_FILE"

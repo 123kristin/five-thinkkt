@@ -9,6 +9,9 @@ parser.add_argument("--save_dir", type=str, default="saved_model/baseline_versio
 parser.add_argument("--fusion_type", type=str, default="late_fusion")
 parser.add_argument("--use_wandb", type=int, default=0)
 parser.add_argument("--gpu_id", type=str, default="0", help="指定使用的GPU ID，如'0','1','2'等")
+parser.add_argument("--d_question", type=int, default=1024)
+parser.add_argument("--dim_qc", type=int, default=200)
+parser.add_argument("--question_rep_type", type=str, default="qid")
 args = parser.parse_args()
 
 # 设置GPU环境变量，必须在import torch前

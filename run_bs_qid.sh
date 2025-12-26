@@ -20,6 +20,41 @@ run_dataset_experiments() {
         LOG_FILE="saved_model/bs/logs/qid_${DATASET}_fold${FOLD}.log"
         
         echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=QID Fold=$FOLD"
+        
+        # --- 断点续传检查 ---
+        # 1. 尝试找到可能已存在的 checkpoint 目录 (假设命名规则)
+        # 我们可以模糊匹配该 saved_model/bs/qid 下包含 "_qid_" 和此 dataset/fold 的目录
+        # 或者更简单：如果日志文件里已经显示 "Prediction finished"，则跳过？
+        # 用户要求的标准：Ckpt目录存在 且 包含 .ckpt 和 predicting*.log
+        
+        # 由于目录名包含动态参数，很难直接预测。
+        # 策略：检查日志文件是否包含 "Prediction finished"。
+        # 或者：遍历该目录下所有子目录，看是否有满足条件的。
+        
+        ALREADY_DONE=0
+        # 查找该目录下所有子目录
+        for DIR in "../../$REL_SAVE_DIR"/*/; do
+            if [ -d "$DIR" ]; then
+                #看目录名是否包含 dataset 和 fold (简单检查)
+                if [[ "$DIR" == *"${DATASET}_${FOLD}_"* ]]; then
+                     # 检查 .ckpt
+                     if ls "$DIR"/*.ckpt 1> /dev/null 2>&1; then
+                         # 检查 predicting*.log
+                         if ls "$DIR"/predicting*.log 1> /dev/null 2>&1; then
+                             ALREADY_DONE=1
+                             break
+                         fi
+                     fi
+                fi
+            fi
+        done
+        
+        if [ $ALREADY_DONE -eq 1 ]; then
+            echo "[$(date)] Fold $FOLD already finished (Found .ckpt and predicting log). Skipping..." | tee -a "$LOG_FILE"
+            continue
+        fi
+        # ------------------
+        
         echo "[$(date)] Starting Training Fold $FOLD..." > "$LOG_FILE"
         
         (
@@ -41,11 +76,30 @@ run_dataset_experiments() {
             train_exit_code=$?
             
             if [ $train_exit_code -eq 0 ]; then
-                # 2. 提取保存路径并预测
-                CKPT_PATH=$(grep "Saved model to " "../../$LOG_FILE" | tail -n 1 | awk '{print $4}')
+                # 2. 提取保存路径
+                # 假设标准命名: {DATASET}_0_0.001_64_vcrkt_qkcs_0.1_200_qid_1024
+                # 为了准确，我们列出该目录下最新的目录
+                # 注意：这里假设同一Fold只会有一个最新的目录
                 
-                # 如果 grep 失败，尝试默认路径构造 (需要包含fold信息如果文件名有的话，或者依赖grep)
-                # wandb_train.py 的 save_model 通常会包含 fold 吗？需要确认，但 grep 应该最稳
+                # 构造预测参数
+                # 需要传递与训练一致的参数
+                
+                # 尝试找到刚生成的 checkpoint 目录
+                CKPT_DIR=$(ls -td "../../$REL_SAVE_DIR"/*/ | head -1)
+                
+                if [ -n "$CKPT_DIR" ]; then
+                    echo "Found checkpoint dir: $CKPT_DIR"
+                    python wandb_predict.py \
+                    --save_dir "$CKPT_DIR" \
+                    --question_rep_type "qid" \
+                    --dim_qc 200 \
+                    --gpu_id "$GPU_ID" \
+                    --use_wandb 0
+                    
+                    echo "[$(date)] Prediction finished for Fold $FOLD." >> "../../$LOG_FILE"
+                else
+                    echo "[$(date)] Could not find checkpoint dir in ../../$REL_SAVE_DIR" >> "../../$LOG_FILE"
+                fi
                 
                 echo "[$(date)] Training process finished for Fold $FOLD." >> "../../$LOG_FILE"
             else
