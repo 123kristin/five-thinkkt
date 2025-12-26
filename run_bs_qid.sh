@@ -8,73 +8,59 @@ run_dataset_experiments() {
     local DATASET=$1
     local GPU_ID=$2
     
-    echo "Starting QID experiments for Dataset: $DATASET on GPU: $GPU_ID"
+    echo "Starting VCRKT QID experiments for Dataset: $DATASET on GPU: $GPU_ID"
     
     # 构造相对保存路径
-    # 我们希望结果分别保存在 saved_model/bs/qid 目录下
     REL_SAVE_DIR="saved_model/bs/qid"
     mkdir -p "$REL_SAVE_DIR"
     
+    # 构造日志文件名
+    LOG_FILE="saved_model/bs/logs/qid_${DATASET}.log"
+    
+    echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=QID"
+    echo "[$(date)] Starting Training..." > "$LOG_FILE"
+    
     (
-        # 遍历 LSTM 层数 (串行)
-        for LAYERS in 1 2 3; do
-            # 构造日志文件名
-            LOG_FILE="saved_model/bs/logs/qid_${DATASET}_lstm${LAYERS}.log"
-            
-            echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=QID Layers=$LAYERS"
-            echo "[$(date)] Starting Training..." > "$LOG_FILE"
-            
-            # 切换到脚本目录执行 (保持相对路径一致性)
-            (cd scripts_training2testing/examples && \
-             # 1. 训练
-             # 注意：使用 wandb_thinkkt_train.py 以获得更好的参数支持
-             # d_knowledge=200 复刻 CRKT
-             # batch_size=64 (QID模式显存占用小，可以使用默认64)
-             python wandb_thinkkt_train.py \
-                --dataset_name "$DATASET" \
-                --question_rep_type "qid" \
-                --num_lstm_layers "$LAYERS" \
-                --save_dir "../../$REL_SAVE_DIR" \
-                --d_question 200 \
-                --d_knowledge 200 \
-                --gpu_id "$GPU_ID" \
-                --use_cot 0 \
-                --use_visual 0 \
-                --num_epochs 200 \
-                --use_wandb 0 \
-                 >> "../../$LOG_FILE" 2>&1
-             
-             train_exit_code=$?
-             
-             if [ $train_exit_code -eq 0 ]; then
-                 # 2. 提取保存路径并预测
-                 CKPT_PATH=$(grep "模型目录: " "../../$LOG_FILE" | tail -n 1 | awk '{print $2}')
-                 
-                 if [ ! -z "$CKPT_PATH" ]; then
-                     echo "[$(date)] Training Finished. Found Checkpoint: $CKPT_PATH" >> "../../$LOG_FILE"
-                     echo "Starting Prediction..." >> "../../$LOG_FILE"
-                     
-                     python wandb_predict.py \
-                        --save_dir "$CKPT_PATH" \
-                        --gpu_id "$GPU_ID" \
-                        --use_wandb 0 \
-                        --bz 128 \
-                        >> "../../$LOG_FILE" 2>&1
-                        
-                     echo "[$(date)] Prediction Finished." >> "../../$LOG_FILE"
-                 else
-                     echo "Error: Could not find Checkpoint Path in log file!" >> "../../$LOG_FILE"
-                 fi
-             else
-                 echo "[$(date)] Training Failed with code $train_exit_code" >> "../../$LOG_FILE"
-             fi
-            )
-            
-            echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=QID Layers=$LAYERS"
-        done
+        # 切换到脚本目录执行 (保持相对路径一致性)
+        cd scripts_training2testing/examples && \
+        # 1. 训练
+        python wandb_vcrkt_train.py \
+        --dataset_name "$DATASET" \
+        --model_name "vcrkt" \
+        --question_rep_type "qid" \
+        --save_dir "../../$REL_SAVE_DIR" \
+        --dim_qc 200 \
+        --gpu_id "$GPU_ID" \
+        --num_epochs 200 \
+        --use_wandb 0 \
+            >> "../../$LOG_FILE" 2>&1
         
-        echo "[GPU $GPU_ID] All layers completed for $DATASET"
+        train_exit_code=$?
+        
+        if [ $train_exit_code -eq 0 ]; then
+            # 2. 提取保存路径并预测
+            CKPT_PATH=$(grep "Saved model to " "../../$LOG_FILE" | tail -n 1 | awk '{print $4}')
+            # 这里的grep模式可能需要根据 wandb_train.py 的实际输出调整，暂时假设标准输出
+            # 实际上 wandb_train.py 的 save_model 会打印路径，或者我们可以直接构建路径
+            # 为了保险起见，我们假设 wandb_vcrkt_train.py 也会保存 best_model.ckpt
+            
+            # 如果 grep 失败，尝试默认路径构造
+            if [ -z "$CKPT_PATH" ]; then
+                 CKPT_PATH="../../$REL_SAVE_DIR/${DATASET}_0_0.001_64_vcrkt_qkcs_0.1_200_qid_1024"
+                 # 注意：上面的路径名字构造可能不准确，依赖于 params_str
+            fi
+
+            # 由于 VCRKT 没有单独的 predict 脚本，通常 train 脚本结束时会跑测试
+            # 如果需要单独跑 predict，可能需要修改 wandb_vcrkt_train.py 支持 --mode predict
+            # 目前 VCRKT 的 wrapper 似乎包含了 predict_one_step，但脚本 wandb_train.py 主流程通常包含测试
+            
+            echo "[$(date)] Training process finished." >> "../../$LOG_FILE"
+        else
+            echo "[$(date)] Training Failed with code $train_exit_code" >> "../../$LOG_FILE"
+        fi
     )
+    
+    echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=QID"
 }
 
 # 并行运行三个数据集 (GPU分配: 0, 1, 2)

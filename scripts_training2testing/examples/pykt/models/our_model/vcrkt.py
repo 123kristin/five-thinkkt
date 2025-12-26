@@ -16,9 +16,9 @@ class VCRKTNet(nn.Module):
         super(VCRKTNet, self).__init__()
         self.model_name = 'vcrkt_net'
         
-        # 获取输入表征类型
-        self.question_rep_type = config.get('question_rep_type', 'qid')
-        self.d_question = config.get('d_question', 1024) # 视觉特征维度通常是1024
+        # 获取输入表征类型和维度
+        # d_question_repr: 最终输入到网络的题目向量维度 (qid=200, visual=200, v&q=400)
+        self.d_question_repr = config.get('d_question_repr', 200) 
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
             # 从环境变量获取指定的GPU ID
@@ -49,19 +49,10 @@ class VCRKTNet(nn.Module):
         self.c_ids = None
         self.KCEmbs = nn.Embedding(self.num_c, self.dim_qc)  # 知识点嵌入
 
-        # 根据表征类型初始化题目部分
-        if self.question_rep_type == 'visual':
-            # 视觉模式：使用外部特征投影
-            # 视觉特征维度(d_question) -> 目标维度(dim_qc)
-            self.visual_proj = nn.Linear(self.d_question, self.dim_qc)
-            # QEmbs 仍保留以防万一，或者作为 fallback，但在 forward 中不使用
-            self.QEmbs = nn.Embedding(self.num_q, self.dim_qc) 
-            print(f"[VCRKTNet] Visual Mode: Initialized Projection {self.d_question}->{self.dim_qc}")
-        else:
-            # 原始模式：使用 QID Embedding
-            self.QEmbs = nn.Embedding(self.num_q, self.dim_qc)
-            self.visual_proj = None
-            print(f"[VCRKTNet] QID Mode: Initialized QID Embedding (dim={self.dim_qc})")
+        # VCRKTNet 现在只负责接收处理好的 q_emb，不再自己管理 QEmbs 或 visual_proj
+        # 但为了兼容可能得旧调用，保留 QEmbs 作为 fallback (如果 q_external_emb 为 None)
+        self.QEmbs = nn.Embedding(self.num_q, self.dim_qc)
+        
 
         # 问题难度
         self.dim_difficulty = config.get('dim_difficulty', self.dim_qc // 2)
@@ -69,10 +60,17 @@ class VCRKTNet(nn.Module):
         # 能力模块
         self.dim_knowledge = self.dim_qc
         self.rnn_type = config.get('rnn_type', 'lstm')
+        
+        # 计算 LSTM 输入维度: (题目 + 知识点 + 0/1 pad)
+        # Shift逻辑: [q, kc, 0] vs [0, q, kc]
+        # 总维度 = d_question_repr + dim_qc + (d_question_repr + dim_qc) = (d_question_repr + dim_qc) * 2
+        lstm_input_dim = (self.d_question_repr + self.dim_qc) * 2
+        print(f"[VCRKTNet] LSTM Input Dim: {lstm_input_dim} (Q_Repr={self.d_question_repr}, KC={self.dim_qc})")
+        
         if self.rnn_type == 'gru':
-            self.rnn_layer = nn.GRU(self.dim_qc * 4, self.dim_knowledge, batch_first=True)
+            self.rnn_layer = nn.GRU(lstm_input_dim, self.dim_knowledge, batch_first=True)
         elif self.rnn_type == 'lstm':
-            self.rnn_layer = nn.LSTM(self.dim_qc * 4, self.dim_knowledge, batch_first=True)
+            self.rnn_layer = nn.LSTM(lstm_input_dim, self.dim_knowledge, batch_first=True)
 
         self.q_scores_extractor = nn.Sequential(
             nn.Dropout(self.dropout),
@@ -93,9 +91,6 @@ class VCRKTNet(nn.Module):
         
         # 重新创建c_ids在正确设备上
         self.c_ids = torch.arange(self.num_c, device=device)
-        
-        if self.visual_proj is not None:
-            self.visual_proj = self.visual_proj.to(device)
         
         return self
 
@@ -143,20 +138,27 @@ class VCRKTNet(nn.Module):
         r = r.to(self.device)
         q_shift = q_shift.to(self.device)
         
-        if q_external_emb is not None and self.visual_proj is not None:
-            # 使用外部视觉特征
-            q_external_emb = q_external_emb.to(self.device)
-            q_emb = self.visual_proj(q_external_emb) # [bz, num_interactions, dim_qc]
+        if q_external_emb is not None:
+            # 优先使用外部传入的特征 (可能是 QID, Visual, 或 V&Q)
+            q_emb = q_external_emb.to(self.device).float() # [bz, num_interactions, d_question_repr]
         else:
-            # 使用内部 QID Embedding
+            #仅作 Fallback
             q_emb = self.QEmbs(q)  # [bz, num_interactions, dim_qc]
+        
         # [bz, num_interactions, num_c]
         c_ids = self.c_ids.unsqueeze(0).expand(bz, -1).unsqueeze(1).expand(-1, num_interactions, -1)
         c_embs = self.KCEmbs(c_ids)  # (bz, num_interactions, num_c, dim_qc)
 
-        zero_vector = torch.zeros(bz, num_interactions, self.dim_qc * 2, device=self.device)
+        # 构造 Zero Vector，长度需匹配 q_emb + kc_embs
+        # q_emb dim: self.d_question_repr
+        # kc_embs dim: self.dim_qc
+        zero_dim = self.d_question_repr + self.dim_qc
+        zero_vector = torch.zeros(bz, num_interactions, zero_dim, device=self.device)
+        
         kc_embs = self.get_kc_avg_emb(c)  # (bz, num_interactions, dim_qc)
+        
         # r 的相应位置为 1 时 q&c&0 否则 0&q&c
+        # cat([q_emb, kc_embs, zero_vector]) -> length: d_q + dim_qc + (d_q + dim_qc) = 2*(d_q+dim_qc)
         e_emb = torch.where(
             r.unsqueeze(-1) == 1,  # [bz, num_interactions, 1]
             torch.cat([q_emb, kc_embs, zero_vector], dim=-1),  # rt=1 时拼接 [xt, 0]
@@ -186,37 +188,44 @@ class VCRKT(nn.Module):
         self.emb_type = config.get('emb_type', 'qkcs')
         
         self.question_rep_type = config.get('question_rep_type', 'qid')
-        self.dataset_name = config.get('dataset_name', 'DBE_KT22') # 需要数据集名称来加载图片映射
+        self.dataset_name = config.get('dataset_name', 'DBE_KT22') 
         self.d_question = config.get('d_question', 1024)
-        # 改进设备选择逻辑，真正选择指定的GPU卡号
+        self.dim_qc = config.get('dim_qc', 200)
+        self.num_q = config.get('num_q', 100) # 需要num_q来初始化QEmbs
+        
+        # 改进设备选择逻辑
         if torch.cuda.is_available():
-            # 从环境变量获取指定的GPU ID
             current_gpu_id = os.environ.get('CURRENT_GPU_ID', '0')
             try:
                 gpu_id = int(current_gpu_id)
                 if gpu_id < torch.cuda.device_count():
                     self.device = torch.device(f"cuda:{gpu_id}")
-                    print(f"[VCRKT] 使用指定GPU: cuda:{gpu_id}")
                 else:
                     self.device = torch.device("cuda:0")
-                    print(f"[VCRKT] 指定GPU {gpu_id} 不可用，使用默认GPU: cuda:0")
             except ValueError:
                 self.device = torch.device("cuda:0")
-                print(f"[VCRKT] GPU ID解析失败，使用默认GPU: cuda:0")
         else:
             self.device = torch.device("cpu")
-            print(f"[VCRKT] CUDA不可用，使用CPU")
+
+        # --- 初始化特征提取组件 (Wrapper负责) ---
         
-        
-        # 初始化多模态组件
-        if self.question_rep_type == 'visual':
-            print(f"[VCRKT] 正在初始化多模态编码器 (Visual Mode)...")
+        # 1. QID Embedding (用于 'qid' 或 'v&q')
+        if self.question_rep_type in ['qid', 'v&q']:
+            print(f"[VCRKT] Initializing QID Embeddings (Dim={self.dim_qc})")
+            self.QEmbs = nn.Embedding(self.num_q, self.dim_qc).to(self.device)
+        else:
+            self.QEmbs = None
+            
+        # 2. Visual Projector (用于 'visual' 或 'v&q')
+        if self.question_rep_type in ['visual', 'v&q']:
+            print(f"[VCRKT] Initializing Visual Projector ({self.d_question}->{self.dim_qc})")
+            self.visual_proj = nn.Linear(self.d_question, self.dim_qc).to(self.device)
+            
+            # 初始化多模态编码器
+            print(f"[VCRKT] Initializing Visual Encoder...")
             self.visual_encoder = VisualLanguageEncoder(
                 num_c=config.get('num_c', 100),
-                d_question=self.d_question, # Encoder输出目标维度，还是先输出1024再投影? 
-                # 这里我们遵循 ThinkKT 模式：Encoder 输出缓存维度(1024) -> 投影到 d_question 
-                # 但 VCRKTNet 内部有一个 d_question -> dim_qc 的投影。
-                # 所以这里我们让 Encoder 输出 1024 (d_question) 即可。
+                d_question=self.d_question, 
                 model_path=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
                 cache_dir=config.get('cache_dir', 'features'),
                 dataset_name=self.dataset_name,
@@ -226,26 +235,65 @@ class VCRKT(nn.Module):
             
             # 构建图片路径映射
             if data_config is None:
-                print(f"[VCRKT] 警告: Visual Mode 需要 data_config 来构建图片路径映射，但未提供！")
+                print(f"[VCRKT] 警告: data_config missing!")
                 self.img_path_dict = {}
             else:
                 self.img_path_dict = build_img_path_dict(self.dataset_name, data_config)
-                print(f"[VCRKT] 已构建 {len(self.img_path_dict)} 个图片映射")
         else:
+            self.visual_proj = None
             self.visual_encoder = None
             self.img_path_dict = {}
 
+        # --- 计算传递给 VCRKTNet 的 d_question_repr ---
+        if self.question_rep_type == 'qid':
+            d_repr = self.dim_qc
+        elif self.question_rep_type == 'visual':
+            d_repr = self.dim_qc
+        elif self.question_rep_type == 'v&q':
+            d_repr = self.dim_qc * 2 # 200 + 200 = 400
+        else:
+            d_repr = self.dim_qc # default
+            
+        print(f"[VCRKT] Calculated d_question_repr for Net: {d_repr}")
+        config['d_question_repr'] = d_repr
+        
         self.model = VCRKTNet(config, data_config)
 
     def _get_question_features(self, qids):
-        """获取题目特征"""
-        if self.question_rep_type == 'visual' and self.visual_encoder is not None:
-            # qids: (batch, seq_len)
-            # visual_encoder forward returns (v_t, k_t)
-            # 我们只需要 v_t
-            v_t, _ = self.visual_encoder(qids, self.img_path_dict, return_kc=False)
-            return v_t
-        return None
+        """获取题目特征 (QID, Visual, or Combined)"""
+        # qids: (batch, seq_len)
+        bz, seq_len = qids.shape
+        
+        # 1. Get QID Emb
+        v_qid = None
+        if self.QEmbs is not None:
+             safe_qids = qids.long().to(self.device)
+             # Clamp/Handle padding if necessary (usually handled by caller or mask)
+             # 这里简单处理，假设输入合法
+             v_qid = self.QEmbs(safe_qids) # (bz, seq, 200)
+
+        # 2. Get Visual Emb
+        v_visual = None
+        if self.visual_encoder is not None:
+            # Encoder returns (bz, seq, 1024)
+            v_raw, _ = self.visual_encoder(qids, self.img_path_dict, return_kc=False)
+            
+            # Project to 200
+            if self.visual_proj is not None:
+                v_visual = self.visual_proj(v_raw.to(self.device)) # (bz, seq, 200)
+        
+        # 3. Combine
+        if self.question_rep_type == 'qid':
+            return v_qid
+        elif self.question_rep_type == 'visual':
+            return v_visual
+        elif self.question_rep_type == 'v&q':
+            if v_qid is None or v_visual is None:
+                # Should not happen
+                return None 
+            return torch.cat([v_qid, v_visual], dim=-1) # (bz, seq, 400)
+            
+        return v_qid
 
     def train_one_step(self, data):
         # 获取外部特征（如果有）
