@@ -95,13 +95,13 @@ run_dataset_experiments() {
 # 并行运行三个数据集 (GPU分配: 0, 1, 2)
 # 注意：数据集名称必须与 data_config.json 中的键完全匹配 (区分大小写)
 
-# GPU 0: XES3G5M (注意全大写) -> 改为 GPU 1
+# GPU 1: XES3G5M (注意全大写) -> 改为 GPU 1
 run_dataset_experiments "XES3G5M" 1 &
 
-# GPU 1: DBE_KT22 (注意全大写) -> 改为 GPU 2
+# GPU 2: DBE_KT22 (注意全大写) -> 改为 GPU 2
 run_dataset_experiments "DBE_KT22" 2 &
 
-# GPU 2: nips_task34 (注意小写) -> 改为 GPU 3
+# GPU 3: nips_task34 (注意小写) -> 改为 GPU 3
 run_dataset_experiments "nips_task34" 3 &
 
 # 等待所有后台任务完成
