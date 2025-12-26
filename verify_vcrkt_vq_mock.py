@@ -30,11 +30,11 @@ def test_vcrkt_vq_mode():
     with patch('pykt.models.our_model.vcrkt.VisualLanguageEncoder', DummyVisualEncoder):
         from pykt.models.our_model.vcrkt import VCRKT
         
-        print("Testing VCRKT with question_rep_type='v&q'...")
+        print("Testing VCRKT with question_rep_type='vq'...")
         
         config = {
             'emb_type': 'qkcs',
-            'question_rep_type': 'v&q',
+            'question_rep_type': 'vq',
             'dataset_name': 'DBE_KT22',
             'd_question': 1024,
             'num_c': 100,

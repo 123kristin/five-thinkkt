@@ -19,7 +19,7 @@ run_dataset_experiments() {
         # 构造日志文件名
         LOG_FILE="saved_model/bs/logs/vq_${DATASET}_fold${FOLD}.log"
         
-        echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=V&Q Fold=$FOLD"
+        echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=VQ Fold=$FOLD"
         echo "[$(date)] Starting Training Fold $FOLD..." > "$LOG_FILE"
         
         (
@@ -29,7 +29,7 @@ run_dataset_experiments() {
             python wandb_vcrkt_train.py \
             --dataset_name "$DATASET" \
             --model_name "vcrkt" \
-            --question_rep_type "v&q" \
+            --question_rep_type "vq" \
             --fold "$FOLD" \
             --save_dir "../../$REL_SAVE_DIR" \
             --dim_qc 200 \
@@ -48,7 +48,7 @@ run_dataset_experiments() {
             fi
         )
         
-        echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=V&Q Fold=$FOLD"
+        echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=VQ Fold=$FOLD"
     done
 }
 

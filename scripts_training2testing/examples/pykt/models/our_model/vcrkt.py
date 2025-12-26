@@ -17,7 +17,7 @@ class VCRKTNet(nn.Module):
         self.model_name = 'vcrkt_net'
         
         # 获取输入表征类型和维度
-        # d_question_repr: 最终输入到网络的题目向量维度 (qid=200, visual=200, v&q=400)
+        # d_question_repr: 最终输入到网络的题目向量维度 (qid=200, visual=200, vq=400)
         self.d_question_repr = config.get('d_question_repr', 200) 
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
@@ -209,15 +209,15 @@ class VCRKT(nn.Module):
 
         # --- 初始化特征提取组件 (Wrapper负责) ---
         
-        # 1. QID Embedding (用于 'qid' 或 'v&q')
-        if self.question_rep_type in ['qid', 'v&q']:
+        # 1. QID Embedding (用于 'qid' 或 'vq')
+        if self.question_rep_type in ['qid', 'vq']:
             print(f"[VCRKT] Initializing QID Embeddings (Dim={self.dim_qc})")
             self.QEmbs = nn.Embedding(self.num_q, self.dim_qc).to(self.device)
         else:
             self.QEmbs = None
             
-        # 2. Visual Projector (用于 'visual' 或 'v&q')
-        if self.question_rep_type in ['visual', 'v&q']:
+        # 2. Visual Projector (用于 'visual' 或 'vq')
+        if self.question_rep_type in ['visual', 'vq']:
             print(f"[VCRKT] Initializing Visual Projector ({self.d_question}->{self.dim_qc})")
             self.visual_proj = nn.Linear(self.d_question, self.dim_qc).to(self.device)
             
@@ -249,7 +249,7 @@ class VCRKT(nn.Module):
             d_repr = self.dim_qc
         elif self.question_rep_type == 'visual':
             d_repr = self.dim_qc
-        elif self.question_rep_type == 'v&q':
+        elif self.question_rep_type == 'vq':
             d_repr = self.dim_qc * 2 # 200 + 200 = 400
         else:
             d_repr = self.dim_qc # default
@@ -287,7 +287,7 @@ class VCRKT(nn.Module):
             return v_qid
         elif self.question_rep_type == 'visual':
             return v_visual
-        elif self.question_rep_type == 'v&q':
+        elif self.question_rep_type == 'vq':
             if v_qid is None or v_visual is None:
                 # Should not happen
                 return None 
