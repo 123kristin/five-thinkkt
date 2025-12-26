@@ -14,53 +14,47 @@ run_dataset_experiments() {
     REL_SAVE_DIR="saved_model/bs/qid"
     mkdir -p "$REL_SAVE_DIR"
     
-    # 构造日志文件名
-    LOG_FILE="saved_model/bs/logs/qid_${DATASET}.log"
-    
-    echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=QID"
-    echo "[$(date)] Starting Training..." > "$LOG_FILE"
-    
-    (
-        # 切换到脚本目录执行 (保持相对路径一致性)
-        cd scripts_training2testing/examples && \
-        # 1. 训练
-        python wandb_vcrkt_train.py \
-        --dataset_name "$DATASET" \
-        --model_name "vcrkt" \
-        --question_rep_type "qid" \
-        --save_dir "../../$REL_SAVE_DIR" \
-        --dim_qc 200 \
-        --gpu_id "$GPU_ID" \
-        --num_epochs 200 \
-        --use_wandb 0 \
-            >> "../../$LOG_FILE" 2>&1
+    # 遍历 5 折 (串行)
+    for FOLD in 0 1 2 3 4; do
+        # 构造日志文件名
+        LOG_FILE="saved_model/bs/logs/qid_${DATASET}_fold${FOLD}.log"
         
-        train_exit_code=$?
+        echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=QID Fold=$FOLD"
+        echo "[$(date)] Starting Training Fold $FOLD..." > "$LOG_FILE"
         
-        if [ $train_exit_code -eq 0 ]; then
-            # 2. 提取保存路径并预测
-            CKPT_PATH=$(grep "Saved model to " "../../$LOG_FILE" | tail -n 1 | awk '{print $4}')
-            # 这里的grep模式可能需要根据 wandb_train.py 的实际输出调整，暂时假设标准输出
-            # 实际上 wandb_train.py 的 save_model 会打印路径，或者我们可以直接构建路径
-            # 为了保险起见，我们假设 wandb_vcrkt_train.py 也会保存 best_model.ckpt
+        (
+            # 切换到脚本目录执行 (保持相对路径一致性)
+            cd scripts_training2testing/examples && \
+            # 1. 训练
+            python wandb_vcrkt_train.py \
+            --dataset_name "$DATASET" \
+            --model_name "vcrkt" \
+            --question_rep_type "qid" \
+            --fold "$FOLD" \
+            --save_dir "../../$REL_SAVE_DIR" \
+            --dim_qc 200 \
+            --gpu_id "$GPU_ID" \
+            --num_epochs 200 \
+            --use_wandb 0 \
+                >> "../../$LOG_FILE" 2>&1
             
-            # 如果 grep 失败，尝试默认路径构造
-            if [ -z "$CKPT_PATH" ]; then
-                 CKPT_PATH="../../$REL_SAVE_DIR/${DATASET}_0_0.001_64_vcrkt_qkcs_0.1_200_qid_1024"
-                 # 注意：上面的路径名字构造可能不准确，依赖于 params_str
+            train_exit_code=$?
+            
+            if [ $train_exit_code -eq 0 ]; then
+                # 2. 提取保存路径并预测
+                CKPT_PATH=$(grep "Saved model to " "../../$LOG_FILE" | tail -n 1 | awk '{print $4}')
+                
+                # 如果 grep 失败，尝试默认路径构造 (需要包含fold信息如果文件名有的话，或者依赖grep)
+                # wandb_train.py 的 save_model 通常会包含 fold 吗？需要确认，但 grep 应该最稳
+                
+                echo "[$(date)] Training process finished for Fold $FOLD." >> "../../$LOG_FILE"
+            else
+                echo "[$(date)] Training Failed for Fold $FOLD with code $train_exit_code" >> "../../$LOG_FILE"
             fi
-
-            # 由于 VCRKT 没有单独的 predict 脚本，通常 train 脚本结束时会跑测试
-            # 如果需要单独跑 predict，可能需要修改 wandb_vcrkt_train.py 支持 --mode predict
-            # 目前 VCRKT 的 wrapper 似乎包含了 predict_one_step，但脚本 wandb_train.py 主流程通常包含测试
-            
-            echo "[$(date)] Training process finished." >> "../../$LOG_FILE"
-        else
-            echo "[$(date)] Training Failed with code $train_exit_code" >> "../../$LOG_FILE"
-        fi
-    )
-    
-    echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=QID"
+        )
+        
+        echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=QID Fold=$FOLD"
+    done
 }
 
 # 并行运行三个数据集 (GPU分配: 0, 1, 2)

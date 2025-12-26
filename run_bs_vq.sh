@@ -14,38 +14,42 @@ run_dataset_experiments() {
     REL_SAVE_DIR="saved_model/bs/vq"
     mkdir -p "$REL_SAVE_DIR"
     
-    # 构造日志文件名
-    LOG_FILE="saved_model/bs/logs/vq_${DATASET}.log"
-    
-    echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=V&Q"
-    echo "[$(date)] Starting Training..." > "$LOG_FILE"
-    
-    (
-        # 切换到脚本目录执行 (保持相对路径一致性)
-        cd scripts_training2testing/examples && \
-        # 1. 训练
-        python wandb_vcrkt_train.py \
-        --dataset_name "$DATASET" \
-        --model_name "vcrkt" \
-        --question_rep_type "v&q" \
-        --save_dir "../../$REL_SAVE_DIR" \
-        --dim_qc 200 \
-        --d_question 1024 \
-        --gpu_id "$GPU_ID" \
-        --num_epochs 200 \
-        --use_wandb 0 \
-            >> "../../$LOG_FILE" 2>&1
+    # 遍历 5 折 (串行)
+    for FOLD in 0 1 2 3 4; do
+        # 构造日志文件名
+        LOG_FILE="saved_model/bs/logs/vq_${DATASET}_fold${FOLD}.log"
         
-        train_exit_code=$?
+        echo "[GPU $GPU_ID] Running: Dataset=$DATASET Type=V&Q Fold=$FOLD"
+        echo "[$(date)] Starting Training Fold $FOLD..." > "$LOG_FILE"
         
-        if [ $train_exit_code -eq 0 ]; then
-            echo "[$(date)] Training process finished." >> "../../$LOG_FILE"
-        else
-            echo "[$(date)] Training Failed with code $train_exit_code" >> "../../$LOG_FILE"
-        fi
-    )
-    
-    echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=V&Q"
+        (
+            # 切换到脚本目录执行 (保持相对路径一致性)
+            cd scripts_training2testing/examples && \
+            # 1. 训练
+            python wandb_vcrkt_train.py \
+            --dataset_name "$DATASET" \
+            --model_name "vcrkt" \
+            --question_rep_type "v&q" \
+            --fold "$FOLD" \
+            --save_dir "../../$REL_SAVE_DIR" \
+            --dim_qc 200 \
+            --d_question 1024 \
+            --gpu_id "$GPU_ID" \
+            --num_epochs 200 \
+            --use_wandb 0 \
+                >> "../../$LOG_FILE" 2>&1
+            
+            train_exit_code=$?
+            
+            if [ $train_exit_code -eq 0 ]; then
+                echo "[$(date)] Training process for Fold $FOLD finished." >> "../../$LOG_FILE"
+            else
+                echo "[$(date)] Training Failed for Fold $FOLD with code $train_exit_code" >> "../../$LOG_FILE"
+            fi
+        )
+        
+        echo "[GPU $GPU_ID] Finished: Dataset=$DATASET Type=V&Q Fold=$FOLD"
+    done
 }
 
 # 并行运行三个数据集
