@@ -25,6 +25,8 @@ parser.add_argument("--emb_type", type=str, default='qkcs')
 
 parser.add_argument("--dropout", type=float, default=0.1)
 parser.add_argument("--dim_qc", type=int, default=200, help="dimension of q and c embedding")
+parser.add_argument("--question_rep_type", type=str, default='qid', help="question representation type: qid or visual")
+parser.add_argument("--d_question", type=int, default=1024, help="dimension of visual features")
 
 # GPU选择参数 - 新增
 parser.add_argument("--gpu_id", type=str, default="0",

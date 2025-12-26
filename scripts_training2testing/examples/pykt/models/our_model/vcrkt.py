@@ -3,13 +3,22 @@ import os
 
 import torch
 import torch.nn as nn
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
+# 导入多模态编码器相关
+from .visual_language_encoder import VisualLanguageEncoder, build_img_path_dict
 
 
 class VCRKTNet(nn.Module):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, data_config: dict = None):
         super(VCRKTNet, self).__init__()
         self.model_name = 'vcrkt_net'
+        
+        # 获取输入表征类型
+        self.question_rep_type = config.get('question_rep_type', 'qid')
+        self.d_question = config.get('d_question', 1024) # 视觉特征维度通常是1024
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
             # 从环境变量获取指定的GPU ID
@@ -39,7 +48,20 @@ class VCRKTNet(nn.Module):
         # 延迟创建c_ids，在to(device)时创建
         self.c_ids = None
         self.KCEmbs = nn.Embedding(self.num_c, self.dim_qc)  # 知识点嵌入
-        self.QEmbs = nn.Embedding(self.num_q, self.dim_qc)  # 问题嵌入
+
+        # 根据表征类型初始化题目部分
+        if self.question_rep_type == 'visual':
+            # 视觉模式：使用外部特征投影
+            # 视觉特征维度(d_question) -> 目标维度(dim_qc)
+            self.visual_proj = nn.Linear(self.d_question, self.dim_qc)
+            # QEmbs 仍保留以防万一，或者作为 fallback，但在 forward 中不使用
+            self.QEmbs = nn.Embedding(self.num_q, self.dim_qc) 
+            print(f"[VCRKTNet] Visual Mode: Initialized Projection {self.d_question}->{self.dim_qc}")
+        else:
+            # 原始模式：使用 QID Embedding
+            self.QEmbs = nn.Embedding(self.num_q, self.dim_qc)
+            self.visual_proj = None
+            print(f"[VCRKTNet] QID Mode: Initialized QID Embedding (dim={self.dim_qc})")
 
         # 问题难度
         self.dim_difficulty = config.get('dim_difficulty', self.dim_qc // 2)
@@ -72,6 +94,9 @@ class VCRKTNet(nn.Module):
         # 重新创建c_ids在正确设备上
         self.c_ids = torch.arange(self.num_c, device=device)
         
+        if self.visual_proj is not None:
+            self.visual_proj = self.visual_proj.to(device)
+        
         return self
 
     def get_kc_avg_emb(self, c, pad_idx=-1):
@@ -94,7 +119,7 @@ class VCRKTNet(nn.Module):
 
         return mean_emb
 
-    def forward(self, q, c, r, q_shift, return_all=False):
+    def forward(self, q, c, r, q_shift, q_external_emb=None, return_all=False):
         """
         :param q: (bz, interactions_seq_len - 1)
             the first (interaction_seq_len - 1) q in an interaction sequence of a student
@@ -117,8 +142,14 @@ class VCRKTNet(nn.Module):
         c = c.to(self.device)
         r = r.to(self.device)
         q_shift = q_shift.to(self.device)
-
-        q_emb = self.QEmbs(q)  # [bz, num_interactions, dim_qc]
+        
+        if q_external_emb is not None and self.visual_proj is not None:
+            # 使用外部视觉特征
+            q_external_emb = q_external_emb.to(self.device)
+            q_emb = self.visual_proj(q_external_emb) # [bz, num_interactions, dim_qc]
+        else:
+            # 使用内部 QID Embedding
+            q_emb = self.QEmbs(q)  # [bz, num_interactions, dim_qc]
         # [bz, num_interactions, num_c]
         c_ids = self.c_ids.unsqueeze(0).expand(bz, -1).unsqueeze(1).expand(-1, num_interactions, -1)
         c_embs = self.KCEmbs(c_ids)  # (bz, num_interactions, num_c, dim_qc)
@@ -149,10 +180,14 @@ class VCRKT(nn.Module):
     消融实验用，没有多头注意力的block 块，即没有建模q_kcs的权重以及
     """
 
-    def __init__(self, config):
+    def __init__(self, config, data_config=None):
         super(VCRKT, self).__init__()
         self.model_name = 'vcrkt'
         self.emb_type = config.get('emb_type', 'qkcs')
+        
+        self.question_rep_type = config.get('question_rep_type', 'qid')
+        self.dataset_name = config.get('dataset_name', 'DBE_KT22') # 需要数据集名称来加载图片映射
+        self.d_question = config.get('d_question', 1024)
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
             # 从环境变量获取指定的GPU ID
@@ -172,10 +207,57 @@ class VCRKT(nn.Module):
             self.device = torch.device("cpu")
             print(f"[VCRKT] CUDA不可用，使用CPU")
         
-        self.model = VCRKTNet(config)
+        
+        # 初始化多模态组件
+        if self.question_rep_type == 'visual':
+            print(f"[VCRKT] 正在初始化多模态编码器 (Visual Mode)...")
+            self.visual_encoder = VisualLanguageEncoder(
+                num_c=config.get('num_c', 100),
+                d_question=self.d_question, # Encoder输出目标维度，还是先输出1024再投影? 
+                # 这里我们遵循 ThinkKT 模式：Encoder 输出缓存维度(1024) -> 投影到 d_question 
+                # 但 VCRKTNet 内部有一个 d_question -> dim_qc 的投影。
+                # 所以这里我们让 Encoder 输出 1024 (d_question) 即可。
+                model_path=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
+                cache_dir=config.get('cache_dir', 'features'),
+                dataset_name=self.dataset_name,
+                use_cache=True,
+                device=self.device
+            )
+            
+            # 构建图片路径映射
+            if data_config is None:
+                print(f"[VCRKT] 警告: Visual Mode 需要 data_config 来构建图片路径映射，但未提供！")
+                self.img_path_dict = {}
+            else:
+                self.img_path_dict = build_img_path_dict(self.dataset_name, data_config)
+                print(f"[VCRKT] 已构建 {len(self.img_path_dict)} 个图片映射")
+        else:
+            self.visual_encoder = None
+            self.img_path_dict = {}
+
+        self.model = VCRKTNet(config, data_config)
+
+    def _get_question_features(self, qids):
+        """获取题目特征"""
+        if self.question_rep_type == 'visual' and self.visual_encoder is not None:
+            # qids: (batch, seq_len)
+            # visual_encoder forward returns (v_t, k_t)
+            # 我们只需要 v_t
+            v_t, _ = self.visual_encoder(qids, self.img_path_dict, return_kc=False)
+            return v_t
+        return None
 
     def train_one_step(self, data):
-        y = self.model(data['qseqs'], data['cseqs'], data['rseqs'], data['shft_qseqs'])
+        # 获取外部特征（如果有）
+        q_external_emb = self._get_question_features(data['qseqs'])
+        
+        y = self.model(
+            data['qseqs'], 
+            data['cseqs'], 
+            data['rseqs'], 
+            data['shft_qseqs'],
+            q_external_emb=q_external_emb
+        )
 
         sm = data['smasks'].to(self.device)
         r_shift = data['shft_rseqs'].to(self.device)
@@ -185,7 +267,16 @@ class VCRKT(nn.Module):
         return y, loss
 
     def predict_one_step(self, data):
-        y = self.model(data['qseqs'], data['cseqs'], data['rseqs'], data['shft_qseqs'])
+        # 获取外部特征（如果有）
+        q_external_emb = self._get_question_features(data['qseqs'])
+        
+        y = self.model(
+            data['qseqs'], 
+            data['cseqs'], 
+            data['rseqs'], 
+            data['shft_qseqs'],
+             q_external_emb=q_external_emb
+        )
         return y
 
     def get_loss(self, ys, rshft, sm):
