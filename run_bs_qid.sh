@@ -77,15 +77,15 @@ run_dataset_experiments() {
             
             if [ $train_exit_code -eq 0 ]; then
                 # 2. 提取保存路径
-                # 假设标准命名: {DATASET}_0_0.001_64_vcrkt_qkcs_0.1_200_qid_1024
-                # 为了准确，我们列出该目录下最新的目录
-                # 注意：这里假设同一Fold只会有一个最新的目录
+                # 必须精确匹配当前 Dataset 和 Fold，防止并发或乱序导致的目录混淆
+                # 模式：*${DATASET}*${FOLD}* (假设params_str包含这两个)
+                # wandb_train.py 中 params_str 是 params 中未被排除的 key 的 join
+                # dataset_name 和 fold 都在 params 中且未被排除
                 
-                # 构造预测参数
-                # 需要传递与训练一致的参数
+                # 使用 grep 进一步过滤，确保 fold 匹配正确 (例如防止 fold=1 匹配到 fold=10，虽然这里只有0-4)
+                # 注意：params_str 通常形如 {dataset}_{fold}_... 或 {model}_{dataset}_{fold}...
                 
-                # 尝试找到刚生成的 checkpoint 目录
-                CKPT_DIR=$(ls -td "../../$REL_SAVE_DIR"/*/ | head -1)
+                CKPT_DIR=$(ls -td "../../$REL_SAVE_DIR"/*"${DATASET}"*"${FOLD}"* | head -1)
                 
                 if [ -n "$CKPT_DIR" ]; then
                     echo "Found checkpoint dir: $CKPT_DIR"

@@ -65,7 +65,7 @@ run_dataset_experiments() {
             
             if [ $train_exit_code -eq 0 ]; then
                  # 2. Predict
-                CKPT_DIR=$(ls -td "../../$REL_SAVE_DIR"/*/ | head -1)
+                CKPT_DIR=$(ls -td "../../$REL_SAVE_DIR"/*"${DATASET}"*"${FOLD}"* | head -1)
                 
                 if [ -n "$CKPT_DIR" ]; then
                     echo "Found checkpoint dir: $CKPT_DIR"
