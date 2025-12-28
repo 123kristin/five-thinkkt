@@ -209,15 +209,15 @@ class VCRKT(nn.Module):
 
         # --- 初始化特征提取组件 (Wrapper负责) ---
         
-        # 1. QID Embedding (用于 'qid' 或 'vq')
-        if self.question_rep_type in ['qid', 'vq']:
+        # 1. QID Embedding (用于 'qid', 'vq', 'gf', 'ca', 'cl')
+        if self.question_rep_type in ['qid', 'vq', 'gf', 'ca', 'cl']:
             print(f"[VCRKT] Initializing QID Embeddings (Dim={self.dim_qc})")
             self.QEmbs = nn.Embedding(self.num_q, self.dim_qc).to(self.device)
         else:
             self.QEmbs = None
             
-        # 2. Visual Projector (用于 'visual' 或 'vq')
-        if self.question_rep_type in ['visual', 'vq']:
+        # 2. Visual Projector (用于 'visual', 'vq', 'gf', 'ca', 'cl')
+        if self.question_rep_type in ['visual', 'vq', 'gf', 'ca', 'cl']:
             print(f"[VCRKT] Initializing Visual Projector ({self.d_question}->{self.dim_qc})")
             self.visual_proj = nn.Linear(self.d_question, self.dim_qc).to(self.device)
             
@@ -244,6 +244,29 @@ class VCRKT(nn.Module):
             self.visual_encoder = None
             self.img_path_dict = {}
 
+        # --- 初始化高级融合层 ---
+        if self.question_rep_type == 'gf':
+            # Gated Fusion: 学习一个门控权重
+            # Input: Concat(Q, V) -> 400 dim
+            # Gate: 400 -> 1 (或者 400 -> 200)
+            # 这里我们用 scalar gate per channel: 400 -> 200
+            print(f"[VCRKT] Initializing Gated Fusion Layer...")
+            self.gate_layer = nn.Sequential(
+                nn.Linear(self.dim_qc * 2, self.dim_qc),
+                nn.Sigmoid()
+            ).to(self.device)
+            
+        elif self.question_rep_type == 'ca':
+            # Cross Attention: QID as Query, Visual as Key/Value
+            print(f"[VCRKT] Initializing Cross-Attention Layer...")
+            self.attn_layer = nn.MultiheadAttention(embed_dim=self.dim_qc, num_heads=4, batch_first=True).to(self.device)
+            # 残差连接通常不需要额外参数，直接相加
+            
+        elif self.question_rep_type == 'cl':
+            # Contrastive Learning: 额外的 Loss 权重
+            self.cl_weight = config.get('cl_weight', 0.1)
+            print(f"[VCRKT] Contrastive Learning Mode Enabled (Weight={self.cl_weight})")
+
         # --- 计算传递给 VCRKTNet 的 d_question_repr ---
         if self.question_rep_type == 'qid':
             d_repr = self.dim_qc
@@ -251,6 +274,10 @@ class VCRKT(nn.Module):
             d_repr = self.dim_qc
         elif self.question_rep_type == 'vq':
             d_repr = self.dim_qc * 2 # 200 + 200 = 400
+        elif self.question_rep_type == 'cl':
+            d_repr = self.dim_qc * 2 # 同 VQ
+        elif self.question_rep_type in ['gf', 'ca']:
+            d_repr = self.dim_qc # 融合后变回 200
         else:
             d_repr = self.dim_qc # default
             
@@ -287,11 +314,32 @@ class VCRKT(nn.Module):
             return v_qid
         elif self.question_rep_type == 'visual':
             return v_visual
-        elif self.question_rep_type == 'vq':
+        elif self.question_rep_type in ['vq', 'cl']:
             if v_qid is None or v_visual is None:
                 # Should not happen
                 return None 
             return torch.cat([v_qid, v_visual], dim=-1) # (bz, seq, 400)
+            
+        elif self.question_rep_type == 'gf':
+            if v_qid is None or v_visual is None: return None
+            # Gated Fusion
+            concat_feat = torch.cat([v_qid, v_visual], dim=-1) # (bz, seq, 400)
+            gate = self.gate_layer(concat_feat) # (bz, seq, 200)
+            # 融合: QID * (1 - gate) + Visual * gate (或者其他形式)
+            # 这里采用残差形式: 以 QID 为主，Visual 为辅
+            # 或者 symmetric
+            fused = v_qid * (1 - gate) + v_visual * gate
+            return fused # (bz, seq, 200)
+            
+        elif self.question_rep_type == 'ca':
+            if v_qid is None or v_visual is None: return None
+            # Cross Attention
+            # Query=QID, Key=Visual, Value=Visual
+            # Self-attention needs (bz, seq, embed_dim)
+            attn_output, _ = self.attn_layer(query=v_qid, key=v_visual, value=v_visual)
+            # Residual connection & Norm (optional, but good practice)
+            # 这里简单做 Add
+            return v_qid + attn_output # (bz, seq, 200)
             
         return v_qid
 
@@ -310,9 +358,45 @@ class VCRKT(nn.Module):
         sm = data['smasks'].to(self.device)
         r_shift = data['shft_rseqs'].to(self.device)
         # calculate loss
+        # calculate loss
         loss = self.get_loss(y, r_shift, sm)
 
+        if self.question_rep_type == 'cl':
+            # Add Contrastive Loss
+            # Input q_external_emb is (bz, seq, 400)
+            # Split it back
+            # q_external_emb: [bz, seq, 400]
+            # First 200 is QID, Last 200 is Visual
+            dim_half = self.dim_qc
+            v_qid = q_external_emb[:, :, :dim_half]
+            v_visual = q_external_emb[:, :, dim_half:]
+            
+            # mask无效位置 (padding)
+            # sm: [bz, seq]
+            
+            cl_loss = self.get_cl_loss(v_qid, v_visual, sm)
+            loss = loss + self.cl_weight * cl_loss
+
         return y, loss
+
+    def get_cl_loss(self, z1, z2, mask):
+        """
+        简单的对比损失 (Cosine Similarity)
+        让同一时间步的 z1 和 z2 相似
+        """
+        # Flatten valid tokens
+        valid_z1 = z1[mask.bool()] # [N, dim]
+        valid_z2 = z2[mask.bool()] # [N, dim]
+        
+        if valid_z1.size(0) == 0:
+            return torch.tensor(0.0, device=self.device)
+            
+        # InfoNCE or simple Cosine Embedding Loss?
+        # Simpler: Maximize Cosine Similarity between positive pairs
+        # 1 - CosineSim
+        target = torch.ones(valid_z1.size(0), device=self.device)
+        loss = nn.CosineEmbeddingLoss()(valid_z1, valid_z2, target)
+        return loss
 
     def predict_one_step(self, data):
         # 获取外部特征（如果有）

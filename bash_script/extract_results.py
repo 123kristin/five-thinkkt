@@ -6,9 +6,10 @@ import numpy as np
 import pandas as pd
 
 # 配置
-base_dir = "saved_model/bs"
+# 脚本位于 bash_script/, saved_model 位于上级目录
+base_dir = "../saved_model/bs"
 datasets = ["XES3G5M", "DBE_KT22", "nips_task34"]
-modes = ["qid", "visual", "vq"]
+modes = ["qid", "visual", "vq", "gf", "ca", "cl"]
 folds = [0, 1, 2, 3, 4]
 
 # 正则匹配预测结果 (包含 Window Metrics)

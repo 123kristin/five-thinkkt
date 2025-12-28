@@ -12,6 +12,7 @@ parser.add_argument("--gpu_id", type=str, default="0", help="指定使用的GPU 
 parser.add_argument("--d_question", type=int, default=1024)
 parser.add_argument("--dim_qc", type=int, default=200)
 parser.add_argument("--question_rep_type", type=str, default="qid")
+parser.add_argument("--cl_weight", type=float, default=0.1)
 args = parser.parse_args()
 
 # 设置GPU环境变量，必须在import torch前

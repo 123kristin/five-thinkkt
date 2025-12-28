@@ -1,8 +1,0 @@
-实现一个脚本
-我现在有3个数据集，DBE_KT22和XES3G5M，NIPS_task34，需要运行wandb_thinkkt_train.py, 
-参数seq_model_type可选择lstm，transformer, 参数num_transformer_layers可选择1,2,3，参数num_lstm_layers可选择1,2,3其他参数默认
-训练完一个实验后就执行wandb_predict.py，测试
-
-python scripts/run_all_thinkkt_experiments.py 
-
-python scripts/run_all_thinkkt_experiments.py --use_cot 1 
