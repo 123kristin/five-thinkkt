@@ -210,14 +210,14 @@ class VCRKT(nn.Module):
         # --- 初始化特征提取组件 (Wrapper负责) ---
         
         # 1. QID Embedding (用于 'qid', 'vq', 'gf', 'ca', 'cl')
-        if self.question_rep_type in ['qid', 'vq', 'gf', 'ca', 'cl']:
+        if self.question_rep_type in ['qid', 'vq', 'gf', 'ca', 'cl', 'cga']:
             print(f"[VCRKT] Initializing QID Embeddings (Dim={self.dim_qc})")
             self.QEmbs = nn.Embedding(self.num_q, self.dim_qc).to(self.device)
         else:
             self.QEmbs = None
             
         # 2. Visual Projector (用于 'visual', 'vq', 'gf', 'ca', 'cl')
-        if self.question_rep_type in ['visual', 'vq', 'gf', 'ca', 'cl']:
+        if self.question_rep_type in ['visual', 'vq', 'gf', 'ca', 'cl', 'cga']:
             print(f"[VCRKT] Initializing Visual Projector ({self.d_question}->{self.dim_qc})")
             self.visual_proj = nn.Linear(self.d_question, self.dim_qc).to(self.device)
             
@@ -256,9 +256,11 @@ class VCRKT(nn.Module):
                 nn.Sigmoid()
             ).to(self.device)
             
-        elif self.question_rep_type == 'ca':
-            # Cross Attention: QID as Query, Visual as Key/Value
-            print(f"[VCRKT] Initializing Cross-Attention Layer...")
+        elif self.question_rep_type in ['ca', 'cga']:
+            # Cross Attention: 
+            # ca: QID as Query, Visual as Key/Value
+            # cga: KC Emb as Query, Visual as Key/Value
+            print(f"[VCRKT] Initializing Cross-Attention Layer (Mode={self.question_rep_type})...")
             self.attn_layer = nn.MultiheadAttention(embed_dim=self.dim_qc, num_heads=4, batch_first=True).to(self.device)
             # 残差连接通常不需要额外参数，直接相加
             
@@ -276,7 +278,7 @@ class VCRKT(nn.Module):
             d_repr = self.dim_qc * 2 # 200 + 200 = 400
         elif self.question_rep_type == 'cl':
             d_repr = self.dim_qc * 2 # 同 VQ
-        elif self.question_rep_type in ['gf', 'ca']:
+        elif self.question_rep_type in ['gf', 'ca', 'cga']:
             d_repr = self.dim_qc # 融合后变回 200
         else:
             d_repr = self.dim_qc # default
@@ -286,7 +288,7 @@ class VCRKT(nn.Module):
         
         self.model = VCRKTNet(config, data_config)
 
-    def _get_question_features(self, qids):
+    def _get_question_features(self, qids, cseqs=None):
         """获取题目特征 (QID, Visual, or Combined)"""
         # qids: (batch, seq_len)
         bz, seq_len = qids.shape
@@ -340,12 +342,28 @@ class VCRKT(nn.Module):
             # Residual connection & Norm (optional, but good practice)
             # 这里简单做 Add
             return v_qid + attn_output # (bz, seq, 200)
+
+        elif self.question_rep_type == 'cga':
+            if cseqs is None or v_visual is None or v_qid is None: return v_qid
+            # Concept-Guided Attention
+            # Query=KC Embedding, Key=Visual, Value=Visual
+            
+            # 1. Get KC Avg Embedding for current step
+            # cseqs: (bz, seq, max_concepts) or similar
+            # Use VCRKTNet's method to get semantic representation of concept
+            kc_emb = self.model.get_kc_avg_emb(cseqs.to(self.device)) # (bz, seq, 200)
+            
+            # 2. Attention
+            attn_output, _ = self.attn_layer(query=kc_emb, key=v_visual, value=v_visual)
+            
+            # 3. Fuse: QID + Visual(guided by KC)
+            return v_qid + attn_output # (bz, seq, 200)
             
         return v_qid
 
     def train_one_step(self, data):
         # 获取外部特征（如果有）
-        q_external_emb = self._get_question_features(data['qseqs'])
+        q_external_emb = self._get_question_features(data['qseqs'], data.get('cseqs'))
         
         y = self.model(
             data['qseqs'], 
@@ -400,7 +418,7 @@ class VCRKT(nn.Module):
 
     def predict_one_step(self, data):
         # 获取外部特征（如果有）
-        q_external_emb = self._get_question_features(data['qseqs'])
+        q_external_emb = self._get_question_features(data['qseqs'], data.get('cseqs'))
         
         y = self.model(
             data['qseqs'], 
