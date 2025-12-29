@@ -97,18 +97,17 @@ run_dataset_experiments() {
     done
 }
 
-# 并行运行三个数据集 (GPU分配: 0, 2, 3)
-
-# GPU 0: XES3G5M
+# 并行运行逻辑
+# 任务1: XES3G5M 在 GPU 0 上独立运行
 run_dataset_experiments "XES3G5M" 0 &
 
-# GPU 2: DBE_KT22
-run_dataset_experiments "DBE_KT22" 2 &
-
-# GPU 3: nips_task34
-run_dataset_experiments "nips_task34" 3 &
+# 任务2: DBE_KT22 和 nips_task34 在 GPU 1 上串行运行
+(
+    run_dataset_experiments "DBE_KT22" 1
+    run_dataset_experiments "nips_task34" 1
+) &
 
 # 等待所有后台任务完成
-echo "All CL experiments launched in parallel. Waiting for completion..."
+echo "All CL experiments launched. XES on GPU 0, DBE+NIPS on GPU 1. Waiting..."
 wait
 echo "All CL experiments finished."
