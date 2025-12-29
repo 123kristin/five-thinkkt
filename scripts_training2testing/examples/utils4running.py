@@ -17,7 +17,7 @@ class Tee:
         # 先获取目录，若目录不存在则创建
         dir_name = os.path.dirname(filename)
         if not os.path.exists(dir_name):
-            os.makedirs(dir_name)
+            os.makedirs(dir_name, exist_ok=True)
 
         # add a timestamp to the params_str, 年月日时分秒微秒
         params_str = f"{ datetime.now().strftime('%Y%m%d_%H%M%S_%f') }"
