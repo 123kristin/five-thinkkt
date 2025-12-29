@@ -11,12 +11,12 @@ SAVE_DIR="$PROJECT_ROOT/saved_model/bs/cl"
 mkdir -p "$LOG_DIR"
 mkdir -p "$SAVE_DIR"
 
-# 定义运行实验的函数
+# 定义运行实验的函数 (训练完立即测试)
 run_dataset_experiments() {
     local DATASET=$1
     local GPU_ID=$2
     
-    echo "Starting VCRKT Contrastive Learning (CL) experiments for Dataset: $DATASET on GPU: $GPU_ID"
+    echo "Starting VCRKT CL experiments for Dataset: $DATASET on GPU: $GPU_ID"
     
     # 遍历 5 折 (串行)
     for FOLD in 0 1 2 3 4; do
@@ -67,7 +67,7 @@ run_dataset_experiments() {
             train_exit_code=$?
             
             if [ $train_exit_code -eq 0 ]; then
-                 # 2. Predict
+                 # 2. Predict (训练成功后立即预测)
                 CKPT_DIR=$(ls -td "$SAVE_DIR"/*"${DATASET}"*"${FOLD}"* | head -1)
                 
                 if [ -n "$CKPT_DIR" ]; then
@@ -79,6 +79,7 @@ run_dataset_experiments() {
                     --d_question 1024 \
                     --dim_qc 200 \
                     --gpu_id "$GPU_ID" \
+                    --bz 128 \
                     --use_wandb 0
                     
                     echo "[$(date)] Prediction finished for Fold $FOLD." >> "$LOG_FILE"
@@ -96,16 +97,16 @@ run_dataset_experiments() {
     done
 }
 
-# 并行运行三个数据集
+# 并行运行三个数据集 (GPU分配: 0, 2, 3)
 
 # GPU 0: XES3G5M
 run_dataset_experiments "XES3G5M" 0 &
 
-# GPU 1: DBE_KT22
-run_dataset_experiments "DBE_KT22" 1 &
+# GPU 2: DBE_KT22
+run_dataset_experiments "DBE_KT22" 2 &
 
-# GPU 2: nips_task34
-run_dataset_experiments "nips_task34" 2 &
+# GPU 3: nips_task34
+run_dataset_experiments "nips_task34" 3 &
 
 # 等待所有后台任务完成
 echo "All CL experiments launched in parallel. Waiting for completion..."
