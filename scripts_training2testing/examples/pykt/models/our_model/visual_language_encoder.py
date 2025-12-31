@@ -544,15 +544,15 @@ class VisualLanguageEncoder(nn.Module):
             self._load_vision_processor()
             
         # Micro-batch Config
-        # 根据显存大小调整, 3B模型 4-bit, 4张图非常安全 (原16已爆显存)
-        MICRO_BATCH_SIZE = 4 
+        # 根据显存大小调整, 3B模型 4-bit, 降至1张以确保存活
+        MICRO_BATCH_SIZE = 1 # 极限求生模式
         
         total_images = len(img_paths)
         all_features = []
         
         # 循环处理 Micro-Batches
         for i in range(0, total_images, MICRO_BATCH_SIZE):
-            if i % (MICRO_BATCH_SIZE * 10) == 0:
+            if i % (MICRO_BATCH_SIZE * 50) == 0: # 调整日志频率
                 print(f"[VisualLanguageEncoder] Online Processing: {i}/{total_images} images...", flush=True)
                 
             batch_paths = img_paths[i : i + MICRO_BATCH_SIZE]
@@ -622,7 +622,7 @@ class VisualLanguageEncoder(nn.Module):
             
             # 清理显存
             del inputs, outputs, hidden_states, pooled_states, h, mb_feature
-            # torch.cuda.empty_cache() # 慎用，会减慢速度，仅在极度甚至不够时使用
+            torch.cuda.empty_cache() # 开启显存清理，防止碎片化
             
         # 拼接所有 micro-batches
         return torch.cat(all_features, dim=0)
