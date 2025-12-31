@@ -108,13 +108,13 @@ run_dataset_experiments() {
 # 分配到不同GPU，因为大模型加载显存占用
 
 # GPU 0: XES3G5M
-run_dataset_experiments "XES3G5M" 0 &
+run_dataset_experiments "XES3G5M" 1 &
 
 # GPU 1: DBE_KT22
-run_dataset_experiments "DBE_KT22" 1 &
+run_dataset_experiments "DBE_KT22" 2 &
 
 # GPU 2: nips_task34
-run_dataset_experiments "nips_task34" 2 &
+run_dataset_experiments "nips_task34" 3 &
 
 # 等待所有后台任务完成
 echo "All QLoRA experiments launched in parallel. Waiting for completion..."
