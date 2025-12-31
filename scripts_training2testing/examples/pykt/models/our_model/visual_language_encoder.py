@@ -73,7 +73,6 @@ class VisualLanguageEncoder(nn.Module):
         dataset_name: Optional[str] = None,
         use_cache: bool = True,
         device: Optional[torch.device] = None,
-        device: Optional[torch.device] = None,
         shared_model = None, # 共享的大模型实例
         shared_processor = None, # 共享的处理器实例
         use_lora: bool = False, # 是否使用LoRA微调
