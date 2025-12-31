@@ -207,10 +207,18 @@ class VisualLanguageEncoder(nn.Module):
                     bnb_4bit_compute_dtype=torch.float16  # 或 bfloat16
                 )
 
+            # 构造 explicit device_map 以避免 "auto" 将层分配到 CPU
+            # 因为我们没有设置 CUDA_VISIBLE_DEVICES，所以需要明确指定 'cuda:X'
+            if self.device and self.device.type == 'cuda':
+                # {"": device} 意味着整个模型都放在该设备上
+                load_device_map = {"": self.device}
+            else:
+                load_device_map = "auto"
+
             self.vision_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.model_path,
                 torch_dtype=torch.float16, # LoRA通常用 fp16/bf16
-                device_map="auto" if torch.cuda.is_available() else None,
+                device_map=load_device_map,
                 trust_remote_code=True,
                 quantization_config=bnb_config if self.use_lora else None
             )
