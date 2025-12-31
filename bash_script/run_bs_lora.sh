@@ -66,7 +66,7 @@ run_dataset_experiments() {
             --d_question 1024 \
             --gpu_id "$GPU_ID" \
             --num_epochs 100 \
-            --batch_size 2 \
+            --batch_size 1 \
             --seq_len 200 \
             --mllm_name "$MLLM_PATH" \
             --use_wandb 0 \
