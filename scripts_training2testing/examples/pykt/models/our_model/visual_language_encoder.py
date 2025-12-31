@@ -538,76 +538,94 @@ class VisualLanguageEncoder(nn.Module):
     def forward_online(self, img_paths: List[str]) -> torch.Tensor:
         """
         在线批量前向传播 (支持梯度回传，用于LoRA训练)
+        支持 Micro-Batching 以避免 OOM
         """
         if not self._vision_model_loaded:
             self._load_vision_processor()
             
-        # 1. 批量读取图片
-        images = [Image.open(p).convert('RGB') for p in img_paths]
+        # Micro-batch Config
+        # 根据显存大小调整, 3B模型 4-bit, 16张图应该比较安全
+        MICRO_BATCH_SIZE = 16 
         
-        # 2. 构造 Prompt
-        prompt = "请分析这张图片中的题目内容，包括题干、选项和图形。"
-        messages_list = []
-        for img in images:
-            messages_list.append([
-                {"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": prompt}]}
-            ])
+        total_images = len(img_paths)
+        all_features = []
+        
+        # 循环处理 Micro-Batches
+        for i in range(0, total_images, MICRO_BATCH_SIZE):
+            if i % (MICRO_BATCH_SIZE * 10) == 0:
+                print(f"[VisualLanguageEncoder] Online Processing: {i}/{total_images} images...", flush=True)
+                
+            batch_paths = img_paths[i : i + MICRO_BATCH_SIZE]
             
-        # 3. Processor 处理
-        # Qwen2-VL 的 processor 处理 batched messages 比较复杂
-        # 简化: apply_chat_template -> text_list, 然后 processor(text=..., images=..., padding=True)
-        
-        text_list = [
-            self.vision_processor_tokenizer.apply_chat_template(ms, tokenize=False, add_generation_prompt=True)
-            for ms in messages_list
-        ]
-        
-        # 处理 vision info (if available) - 简化，假设都是静态图
-        image_inputs = images
-        
-        processor_kwargs = {
-            "text": text_list,
-            "images": image_inputs,
-            "padding": True,
-            "return_tensors": "pt"
-        }
-        
-        inputs = self.vision_processor_tokenizer(**processor_kwargs)
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        # 4. Forward (With Gradients)
-        # 确保模型在 train 模式 (LoRA layers active)
-        # self.vision_model.train() # 已在 init 设置
-        
-        outputs = self.vision_model(**inputs, output_hidden_states=True)
-        hidden_states = outputs.hidden_states
-        
-        # 5. Pooling
-        # Batch Pooling
-        last_layers = hidden_states[-2:] # List of (batch, seq, dim)
-        pooled_states = []
-        for h in last_layers:
-            # h: (batch, seq, dim)
-            mask = inputs.get('attention_mask', None)
-            if mask is not None:
-                h_masked = h * mask.unsqueeze(-1)
-                pooled = h_masked.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp(min=1)
-            else:
-                pooled = h.mean(dim=1)
-            pooled_states.append(pooled)
+            # --- 以下逻辑针对 micro-batch ---
             
-        hidden_state = torch.stack(pooled_states).mean(dim=0) # (batch, dim)
-        
-        # 6. Projection
-        if hidden_state.dtype == torch.bfloat16:
-            hidden_state = hidden_state.float()
+            # 1. 批量读取图片
+            images = [Image.open(p).convert('RGB') for p in batch_paths]
             
-        feature = self.feature_proj(hidden_state) # (batch, 1024)
-        
-        if self.output_proj is not None:
-            feature = self.output_proj(feature) # (batch, 200)
+            # 2. 构造 Prompt
+            prompt = "请分析这张图片中的题目内容，包括题干、选项和图形。"
+            messages_list = []
+            for img in images:
+                messages_list.append([
+                    {"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": prompt}]}
+                ])
+                
+            # 3. Processor 处理
+            text_list = [
+                self.vision_processor_tokenizer.apply_chat_template(ms, tokenize=False, add_generation_prompt=True)
+                for ms in messages_list
+            ]
             
-        return feature
+            # 显式清理不再需要的对象以释放内存
+            del messages_list
+            
+            processor_kwargs = {
+                "text": text_list,
+                "images": images,
+                "padding": True,
+                "return_tensors": "pt"
+            }
+            
+            inputs = self.vision_processor_tokenizer(**processor_kwargs)
+            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+            
+            # 4. Forward (With Gradients)
+            # 确保模型在 train 模式 (LoRA layers active)
+            
+            outputs = self.vision_model(**inputs, output_hidden_states=True)
+            hidden_states = outputs.hidden_states
+            
+            # 5. Pooling
+            last_layers = hidden_states[-2:] # List of (batch, seq, dim)
+            pooled_states = []
+            for h in last_layers:
+                mask = inputs.get('attention_mask', None)
+                if mask is not None:
+                    h_masked = h * mask.unsqueeze(-1)
+                    pooled = h_masked.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp(min=1)
+                else:
+                    pooled = h.mean(dim=1)
+                pooled_states.append(pooled)
+                
+            hidden_state = torch.stack(pooled_states).mean(dim=0) # (batch, dim)
+            
+            # 6. Projection
+            if hidden_state.dtype == torch.bfloat16:
+                hidden_state = hidden_state.float()
+                
+            mb_feature = self.feature_proj(hidden_state) # (batch, 1024)
+            
+            if self.output_proj is not None:
+                mb_feature = self.output_proj(mb_feature) # (batch, 200)
+                
+            all_features.append(mb_feature)
+            
+            # 清理显存
+            del inputs, outputs, hidden_states, pooled_states, h, mb_feature
+            # torch.cuda.empty_cache() # 慎用，会减慢速度，仅在极度甚至不够时使用
+            
+        # 拼接所有 micro-batches
+        return torch.cat(all_features, dim=0)
     
     
     def forward(
