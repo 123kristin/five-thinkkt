@@ -797,7 +797,7 @@ def build_img_path_dict(dataset_name: str, data_config: dict) -> Dict[int, str]:
         dpath = data_config.get("dpath", "")
         possible_paths = [
             os.path.join(dpath, "images"),
-            os.path.join(dpath, "../images"),
+            "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/Eedi/data/images",
             "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/NIPS_task34/images",
             "/home3/zhiyu/code-5/CRKT/data/NIPS_task34/images"
         ]

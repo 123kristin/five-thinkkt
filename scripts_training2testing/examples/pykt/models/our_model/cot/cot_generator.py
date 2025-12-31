@@ -348,17 +348,24 @@ class CoTGenerator(nn.Module):
         
         # 生成 CoT
         try:
-            # 加载图片
-            image = Image.open(img_path).convert('RGB')
+            messages_content = []
+            
+            # 尝试加载图片 (如果 img_path 存在且有效)
+            if img_path and os.path.exists(img_path):
+                try:
+                    image = Image.open(img_path).convert('RGB')
+                    messages_content.append({"type": "image", "image": image})
+                except Exception as img_err:
+                    print(f"[CoTGenerator] 警告: 图片加载失败 {img_path}: {img_err}")
+            
+            # 添加文本 prompt
+            messages_content.append({"type": "text", "text": prompt})
             
             # 准备输入
             messages = [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": prompt}
-                    ]
+                    "content": messages_content
                 }
             ]
             
