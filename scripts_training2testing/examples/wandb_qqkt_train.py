@@ -31,7 +31,7 @@ parser.add_argument("--use_cot", type=int, default=0, help="是否使用思维�
 parser.add_argument("--d_cot", type=int, default=384, help="CoT embedding dimension")
 parser.add_argument("--cot_threshold", type=int, default=2, help="基于规则策略的阈值")
 parser.add_argument("--adaptive_strategy", type=str, default='rule', choices=['rule', 'learnable'], help="CoT触发策略: rule 或 learnable")
-parser.add_argument("--mllm_name", type=str, default='/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct', help="MLLM模型路径")
+parser.add_argument("--mllm_name", type=str, default='/home3/zhiyu/code-5/CRKT/five-thinkkt/hf_models/Qwen/Qwen2-VL-3B-Instruct', help="MLLM模型路径")
 parser.add_argument("--cot_cache_dir", type=str, default='cot_cache', help="CoT缓存目录")
 
 # GPU选择参数 - 新增

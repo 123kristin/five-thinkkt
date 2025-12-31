@@ -301,7 +301,7 @@ class QQKT(nn.Module):
                 print(f"[QQKT] 正在初始化 CoT 生成器...")
                 sys.stdout.flush()
                 self.cot_generator = CoTGenerator(
-                    mllm_name=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
+                    mllm_name=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/five-thinkkt/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
                     d_cot=self.d_cot,
                     cache_dir=config.get('cot_cache_dir', 'cot_cache'),
                     device=self.device,  # 共享设备
