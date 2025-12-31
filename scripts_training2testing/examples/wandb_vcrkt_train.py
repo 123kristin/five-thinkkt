@@ -32,6 +32,7 @@ parser.add_argument("--d_question", type=int, default=1024, help="dimension of v
 # LoRA Arguments
 parser.add_argument("--use_lora", type=int, default=0, help="whether to use QLoRA fine-tuning (1=True, 0=False)")
 parser.add_argument("--lora_r", type=int, default=16, help="LoRA rank")
+parser.add_argument("--mllm_name", type=str, default='/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct', help="Path to Qwen2-VL model")
 
 # GPU选择参数 - 新增
 parser.add_argument("--gpu_id", type=str, default="0",

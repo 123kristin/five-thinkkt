@@ -8,7 +8,11 @@ echo "Project Root: $PROJECT_ROOT"
 LOG_DIR="$PROJECT_ROOT/saved_model/bs/logs"
 SAVE_DIR="$PROJECT_ROOT/saved_model/bs/lora"
 
+# 设置大模型路径 (请修改此处为您服务器上的真实路径)
+MLLM_PATH="/home3/zhiyu/code-5/CRKT/five-thinkkt/hf_models/Qwen/Qwen2-VL-3B-Instruct" 
+
 mkdir -p "$LOG_DIR"
+
 mkdir -p "$SAVE_DIR"
 
 # 定义运行实验的函数 (训练完立即测试)
@@ -62,8 +66,10 @@ run_dataset_experiments() {
             --d_question 1024 \
             --gpu_id "$GPU_ID" \
             --num_epochs 100 \
+            --mllm_name "$MLLM_PATH" \
             --use_wandb 0 \
                 >> "$LOG_FILE" 2>&1
+
             
             train_exit_code=$?
             
