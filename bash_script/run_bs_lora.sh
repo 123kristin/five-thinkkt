@@ -63,9 +63,11 @@ run_dataset_experiments() {
             --fold "$FOLD" \
             --save_dir "$SAVE_DIR" \
             --dim_qc 200 \
+            --bz 16 \
             --d_question 1024 \
             --gpu_id "$GPU_ID" \
             --num_epochs 100 \
+            --batch_size 16 \
             --mllm_name "$MLLM_PATH" \
             --use_wandb 0 \
                 >> "$LOG_FILE" 2>&1
