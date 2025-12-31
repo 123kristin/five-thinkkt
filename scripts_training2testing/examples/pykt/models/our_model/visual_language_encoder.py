@@ -98,6 +98,7 @@ class VisualLanguageEncoder(nn.Module):
         self.device = device
         print(f"[VisualLanguageEncoder] 使用设备: {self.device}")
         
+        self.model_path = model_path
         self.num_c = num_c
         self.d_question = d_question
         self.dataset_name = dataset_name
@@ -136,7 +137,8 @@ class VisualLanguageEncoder(nn.Module):
             if self.use_lora:
                 self._load_vision_processor()
         
-        self.model_path = model_path
+            if self.use_lora:
+                self._load_vision_processor()
         
         # 知识点分类头
         self.kc_classifier = nn.Sequential(
