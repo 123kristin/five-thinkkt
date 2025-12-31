@@ -26,6 +26,14 @@ parser.add_argument("--emb_type", type=str, default='qkcs')
 parser.add_argument("--dropout", type=float, default=0.1)
 parser.add_argument("--dim_qc", type=int, default=200, help="dimension of q and c embedding")
 
+# CoT config
+parser.add_argument("--use_cot", type=int, default=0, help="是否使用思维链")
+parser.add_argument("--d_cot", type=int, default=384, help="CoT embedding dimension")
+parser.add_argument("--cot_threshold", type=int, default=2, help="基于规则策略的阈值")
+parser.add_argument("--adaptive_strategy", type=str, default='rule', choices=['rule', 'learnable'], help="CoT触发策略: rule 或 learnable")
+parser.add_argument("--mllm_name", type=str, default='/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct', help="MLLM模型路径")
+parser.add_argument("--cot_cache_dir", type=str, default='cot_cache', help="CoT缓存目录")
+
 # GPU选择参数 - 新增
 parser.add_argument("--gpu_id", type=str, default="0",
                    help="指定使用的GPU ID，如'0','1','2'等")
