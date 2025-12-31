@@ -78,6 +78,14 @@ def main(params):
         data_config = json.load(fin)
     if 'maxlen' in data_config[dataset_name]:#prefer to use the maxlen in data config
         train_config["seq_len"] = data_config[dataset_name]['maxlen']
+    
+    # Allow override from params (for QLoRA experiments) - THIS IS THE CRITICAL FIX
+    if 'seq_len' in params and params['seq_len'] is not None:
+        print(f"[wandb_train] Overriding seq_len to {params['seq_len']}")
+        train_config["seq_len"] = params['seq_len']
+        # Also update data_config which is passed to dataset init
+        data_config[dataset_name]['maxlen'] = params['seq_len']
+        
     seq_len = train_config["seq_len"]
     params_for_str = params.copy()
     if 'gen_kc_emb_file' in params_for_str:

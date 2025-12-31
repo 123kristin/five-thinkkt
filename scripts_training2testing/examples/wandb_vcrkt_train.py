@@ -28,6 +28,7 @@ parser.add_argument("--dim_qc", type=int, default=200, help="dimension of q and 
 parser.add_argument("--question_rep_type", type=str, default='qid', help="question representation type: qid, visual, vq, gf, ca, cl, or cga")
 parser.add_argument("--cl_weight", type=float, default=0.1, help="weight for contrastive loss in cl mode")
 parser.add_argument("--d_question", type=int, default=1024, help="dimension of visual features")
+parser.add_argument("--seq_len", type=int, default=None, help="Sequence length (defaults to config if None)")
 
 # LoRA Arguments
 parser.add_argument("--use_lora", type=int, default=0, help="whether to use QLoRA fine-tuning (1=True, 0=False)")
