@@ -544,8 +544,8 @@ class VisualLanguageEncoder(nn.Module):
             self._load_vision_processor()
             
         # Micro-batch Config
-        # 根据显存大小调整, 3B模型 4-bit, 16张图应该比较安全
-        MICRO_BATCH_SIZE = 16 
+        # 根据显存大小调整, 3B模型 4-bit, 4张图非常安全 (原16已爆显存)
+        MICRO_BATCH_SIZE = 4 
         
         total_images = len(img_paths)
         all_features = []
