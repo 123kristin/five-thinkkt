@@ -41,7 +41,17 @@ except ImportError:
     Image = None
     TRANSFORMERS_AVAILABLE = False
     QWEN_VL_UTILS_AVAILABLE = False
+    QWEN_VL_UTILS_AVAILABLE = False
     process_vision_info = None
+
+# QLoRA Dependencies
+try:
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from transformers import BitsAndBytesConfig
+    LOARA_AVAILABLE = True
+except ImportError:
+    LOARA_AVAILABLE = False
+
 
 
 class VisualLanguageEncoder(nn.Module):
@@ -63,8 +73,11 @@ class VisualLanguageEncoder(nn.Module):
         dataset_name: Optional[str] = None,
         use_cache: bool = True,
         device: Optional[torch.device] = None,
+        device: Optional[torch.device] = None,
         shared_model = None, # 共享的大模型实例
-        shared_processor = None # 共享的处理器实例
+        shared_processor = None, # 共享的处理器实例
+        use_lora: bool = False, # 是否使用LoRA微调
+        lora_r: int = 16 # LoRA Rank
     ):
         """
         初始化多模态编码器
@@ -91,16 +104,38 @@ class VisualLanguageEncoder(nn.Module):
         self.dataset_name = dataset_name
         self.use_cache = use_cache
         
+        self.use_lora = use_lora
+        self.lora_r = lora_r
+        
+        if self.use_lora and not LOARA_AVAILABLE:
+            print("[VisualLanguageEncoder] 警告: 未安装 peft/bitsandbytes, 无法使用 LoRA. 降级为普通模式.")
+            self.use_lora = False
+            
+        if self.use_lora:
+            print(f"[VisualLanguageEncoder] 启用 LoRA 微调模式 (r={self.lora_r})")
+            self.use_cache = False # LoRA模式下禁用缓存
+            print(f"[VisualLanguageEncoder] LoRA模式下已自动禁用特征缓存")
+
         # 初始化视觉模型（延迟加载或使用共享）
         if shared_model is not None:
             self.vision_model = shared_model
             self.vision_processor_tokenizer = shared_processor
             self._vision_model_loaded = True
             print("[VisualLanguageEncoder] 使用共享的 Qwen2-VL 模型实例")
+            
+            # 如果是共享模型且开启LoRA，需要确认它已经是 PeftModel
+            if self.use_lora:
+                # 这里假设外部负责 Wrap LoRA，或者再次 Wrap? 
+                # 通常如果 share，说明外部已经弄好了。暂不处理重复Wrap。
+                pass
         else:
             self.vision_model = None
             self.vision_processor_tokenizer = None
             self._vision_model_loaded = False
+            
+            # 如果启用 LoRA，立即加载模型并在GPU上准备好（因为需要训练）
+            if self.use_lora:
+                self._load_vision_processor()
         
         self.model_path = model_path
         
@@ -159,22 +194,83 @@ class VisualLanguageEncoder(nn.Module):
         print(f"[VisualLanguageEncoder] 正在加载视觉模型: {self.model_path}")
         try:
             # 加载模型和processor
+            
+            bnb_config = None
+            if self.use_lora:
+                # 启用 4-bit 量化配置 (QLoRA)
+                print("[VisualLanguageEncoder] 使用 4-bit 量化加载 (QLoRA)")
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16  # 或 bfloat16
+                )
+
             self.vision_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self.model_path,
-                torch_dtype=torch.bfloat16,
+                torch_dtype=torch.float16, # LoRA通常用 fp16/bf16
                 device_map="auto" if torch.cuda.is_available() else None,
-                trust_remote_code=True
+                trust_remote_code=True,
+                quantization_config=bnb_config if self.use_lora else None
             )
+            
+            if self.use_lora:
+                # 预处理模型以进行 k-bit 训练 (Gradient Checkpointing等)
+                self.vision_model = prepare_model_for_kbit_training(self.vision_model)
+                
+                # 应用 LoRA
+                target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+                peft_config = LoraConfig(
+                    r=self.lora_r,
+                    lora_alpha=self.lora_r * 2,
+                    target_modules=target_modules,
+                    lora_dropout=0.05,
+                    bias="none",
+                    task_type="CAUSAL_LM" # Qwen2-VL 是 Causal LM 结构
+                )
+                self.vision_model = get_peft_model(self.vision_model, peft_config)
+                self.vision_model.print_trainable_parameters()
+            
             self.vision_processor_tokenizer = AutoProcessor.from_pretrained(
                 self.model_path,
                 trust_remote_code=True,
                 use_fast=False  # 避免警告，使用slow processor
             )
-            self.vision_model.eval()  # 设置为评估模式
+            
+            if self.use_lora:
+                self.vision_model.train() # 开启训练模式 (对于LoRA部分)
+            else:
+                self.vision_model.eval()  # 设置为评估模式
             self._vision_model_loaded = True
             print(f"[VisualLanguageEncoder] 视觉模型加载完成")
         except Exception as e:
             raise RuntimeError(f"加载视觉模型失败: {e}")
+
+        # --- QLoRA 配置 ---
+        if self.use_lora:
+            print(f"[VisualLanguageEncoder] 正在应用 LoRA 适配器...")
+            
+            # 1. 配置 LoRA
+            # target_modules 根据 Qwen2 结构选择主要 Linear 层
+            target_modules = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+            peft_config = LoraConfig(
+                r=self.lora_r,
+                lora_alpha=self.lora_r * 2, # 通常 alpha = 2*r
+                target_modules=target_modules,
+                lora_dropout=0.05,
+                bias="none",
+                task_type="FEATURE_EXTRACTION" 
+                # 注意: Qwen2-VL用于生成，通常是 CAUSAL_LM，但我们这只用 Vision Encoder + Projection
+                # 实际上我们是对整个 Model Wrap。
+                # 如果我们只用了 hidden_states，反向传播能通即可。
+            )
+            
+            # 2. 如果模型已经是 4-bit (在 from_pretrained 加载时设置)
+            # 我们需要在 from_pretrained 时就传入 quantization_config
+            # 由于上面已经加载了 self.vision_model (可能未量化)，这在 load_vision_processor 中分开处理比较麻烦
+            # 因此我们需要重构 _load_vision_processor 的逻辑
+            pass # 逻辑合并到上方 try 块中更佳，这里仅做标记
+
     
     def _get_cache_path(self) -> str:
         """获取特征缓存文件路径"""
@@ -299,7 +395,13 @@ class VisualLanguageEncoder(nn.Module):
                 inputs = {k: v.to(self.device) for k, v in inputs.items()}
                 
                 # 提取隐藏状态
-                with torch.no_grad():
+                # 如果启用 LoRA，需要开启梯度 (context manager controlled by caller, or specific logic)
+                # 但 encode_image 通常是单条推理，训练时建议用 batch_forward
+                
+                # 为了复用逻辑：
+                ctx_manager = torch.no_grad() if not self.use_lora else torch.enable_grad()
+                
+                with ctx_manager:
                     outputs = self.vision_model(**inputs, output_hidden_states=True)
                     hidden_states = outputs.hidden_states
                     last_layers = hidden_states[-2:]
@@ -423,6 +525,81 @@ class VisualLanguageEncoder(nn.Module):
             k_t = k_t.squeeze(0)  # (num_c,)
         
         return k_t
+
+    def forward_online(self, img_paths: List[str]) -> torch.Tensor:
+        """
+        在线批量前向传播 (支持梯度回传，用于LoRA训练)
+        """
+        if not self._vision_model_loaded:
+            self._load_vision_processor()
+            
+        # 1. 批量读取图片
+        images = [Image.open(p).convert('RGB') for p in img_paths]
+        
+        # 2. 构造 Prompt
+        prompt = "请分析这张图片中的题目内容，包括题干、选项和图形。"
+        messages_list = []
+        for img in images:
+            messages_list.append([
+                {"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": prompt}]}
+            ])
+            
+        # 3. Processor 处理
+        # Qwen2-VL 的 processor 处理 batched messages 比较复杂
+        # 简化: apply_chat_template -> text_list, 然后 processor(text=..., images=..., padding=True)
+        
+        text_list = [
+            self.vision_processor_tokenizer.apply_chat_template(ms, tokenize=False, add_generation_prompt=True)
+            for ms in messages_list
+        ]
+        
+        # 处理 vision info (if available) - 简化，假设都是静态图
+        image_inputs = images
+        
+        processor_kwargs = {
+            "text": text_list,
+            "images": image_inputs,
+            "padding": True,
+            "return_tensors": "pt"
+        }
+        
+        inputs = self.vision_processor_tokenizer(**processor_kwargs)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        # 4. Forward (With Gradients)
+        # 确保模型在 train 模式 (LoRA layers active)
+        # self.vision_model.train() # 已在 init 设置
+        
+        outputs = self.vision_model(**inputs, output_hidden_states=True)
+        hidden_states = outputs.hidden_states
+        
+        # 5. Pooling
+        # Batch Pooling
+        last_layers = hidden_states[-2:] # List of (batch, seq, dim)
+        pooled_states = []
+        for h in last_layers:
+            # h: (batch, seq, dim)
+            mask = inputs.get('attention_mask', None)
+            if mask is not None:
+                h_masked = h * mask.unsqueeze(-1)
+                pooled = h_masked.sum(dim=1) / mask.sum(dim=1, keepdim=True).clamp(min=1)
+            else:
+                pooled = h.mean(dim=1)
+            pooled_states.append(pooled)
+            
+        hidden_state = torch.stack(pooled_states).mean(dim=0) # (batch, dim)
+        
+        # 6. Projection
+        if hidden_state.dtype == torch.bfloat16:
+            hidden_state = hidden_state.float()
+            
+        feature = self.feature_proj(hidden_state) # (batch, 1024)
+        
+        if self.output_proj is not None:
+            feature = self.output_proj(feature) # (batch, 200)
+            
+        return feature
+    
     
     def forward(
         self, 
@@ -472,7 +649,13 @@ class VisualLanguageEncoder(nn.Module):
         if valid_indices:
             valid_paths = [img_paths[i] for i in valid_indices]
             valid_qids = [qids_list[i] for i in valid_indices]
-            valid_features = self.encode_batch(valid_paths, valid_qids)
+            
+            # LoRA优化: 如果启用LoRA，使用新的在线处理逻辑 (保留梯度)
+            if self.use_lora:
+                # encode_batch 目前实现主要是缓存查找，我们需要一个真正的 batch forward
+                valid_features = self.forward_online(valid_paths)
+            else:
+                valid_features = self.encode_batch(valid_paths, valid_qids)
         else:
             valid_features = torch.zeros((0, self.d_question), device=self.device)
         

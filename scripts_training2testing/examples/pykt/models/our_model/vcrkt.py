@@ -193,6 +193,9 @@ class VCRKT(nn.Module):
         self.dim_qc = config.get('dim_qc', 200)
         self.num_q = config.get('num_q', 100) # 需要num_q来初始化QEmbs
         
+        self.use_lora = config.get('use_lora', False)
+        self.lora_r = config.get('lora_r', 16)
+        
         # 改进设备选择逻辑
         if torch.cuda.is_available():
             current_gpu_id = os.environ.get('CURRENT_GPU_ID', '0')
@@ -229,8 +232,12 @@ class VCRKT(nn.Module):
                 model_path=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
                 cache_dir=config.get('cache_dir', 'features'),
                 dataset_name=self.dataset_name,
+                cache_dir=config.get('cache_dir', 'features'),
+                dataset_name=self.dataset_name,
                 use_cache=True,
-                device=self.device
+                device=self.device,
+                use_lora=self.use_lora,
+                lora_r=self.lora_r
             )
             
             # 构建图片路径映射

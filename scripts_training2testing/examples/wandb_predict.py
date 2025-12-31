@@ -13,6 +13,8 @@ parser.add_argument("--d_question", type=int, default=1024)
 parser.add_argument("--dim_qc", type=int, default=200)
 parser.add_argument("--question_rep_type", type=str, default="qid")
 parser.add_argument("--cl_weight", type=float, default=0.1)
+parser.add_argument("--use_lora", type=int, default=0, help="whether to use QLoRA fine-tuning (1=True, 0=False)")
+parser.add_argument("--lora_r", type=int, default=16, help="LoRA rank")
 args = parser.parse_args()
 
 # 设置GPU环境变量，必须在import torch前

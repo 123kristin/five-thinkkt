@@ -29,6 +29,10 @@ parser.add_argument("--question_rep_type", type=str, default='qid', help="questi
 parser.add_argument("--cl_weight", type=float, default=0.1, help="weight for contrastive loss in cl mode")
 parser.add_argument("--d_question", type=int, default=1024, help="dimension of visual features")
 
+# LoRA Arguments
+parser.add_argument("--use_lora", type=int, default=0, help="whether to use QLoRA fine-tuning (1=True, 0=False)")
+parser.add_argument("--lora_r", type=int, default=16, help="LoRA rank")
+
 # GPU选择参数 - 新增
 parser.add_argument("--gpu_id", type=str, default="0",
                    help="指定使用的GPU ID，如'0','1','2'等")
