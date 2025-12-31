@@ -348,6 +348,7 @@ class CoTGenerator(nn.Module):
         
         # 生成 CoT
         try:
+            image = None  # Initialize image variable
             messages_content = []
             
             # 尝试加载图片 (如果 img_path 存在且有效)
@@ -379,7 +380,7 @@ class CoTGenerator(nn.Module):
                 from qwen_vl_utils import process_vision_info
                 image_inputs, video_inputs = process_vision_info(messages)
             except ImportError:
-                image_inputs = [image]
+                image_inputs = [image] if image is not None else []
                 video_inputs = []
             
             # 构建 processor 参数（如果 video_inputs 为空，则不传入 videos 参数）
