@@ -232,8 +232,6 @@ class VCRKT(nn.Module):
                 model_path=config.get('mllm_name', '/home3/zhiyu/code-5/CRKT/hf_models/Qwen/Qwen2-VL-3B-Instruct'),
                 cache_dir=config.get('cache_dir', 'features'),
                 dataset_name=self.dataset_name,
-                cache_dir=config.get('cache_dir', 'features'),
-                dataset_name=self.dataset_name,
                 use_cache=True,
                 device=self.device,
                 use_lora=self.use_lora,
