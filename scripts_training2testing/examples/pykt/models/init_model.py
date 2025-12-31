@@ -159,6 +159,11 @@ def init_model(model_name, model_config, data_config, emb_type):
         model_config['num_c'] = data_config["num_c"]
         model_config['num_q'] = data_config["num_q"]
         model = CRKT(model_config).to(device)
+    elif model_name == "qqkt":
+        from .our_model.qqkt import QQKT
+        model_config['num_c'] = data_config["num_c"]
+        model_config['num_q'] = data_config["num_q"]
+        model = QQKT(model_config).to(device)
     elif model_name == "vcrkt":
         from .our_model.vcrkt import VCRKT
         model_config['num_c'] = data_config["num_c"]
