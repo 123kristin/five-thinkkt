@@ -259,10 +259,17 @@ class QQKT(nn.Module):
     消融实验用，没有多头注意力的block 块，即没有建模q_kcs的权重以及
     """
 
-    def __init__(self, config):
+    def __init__(self, config, data_config=None):
         super(QQKT, self).__init__()
         self.model_name = 'qqkt'
-        self.emb_type = config.get('emb_type', 'qkcs')  # 此处不要用 pop，因为后面还要传给 model
+        self.emb_type = config.get('emb_type', 'qkcs')
+        
+        # Merge data_config into config if provided, especially for dpath
+        if data_config:
+            config['dpath'] = data_config.get('dpath', config.get('dpath', ''))
+            # Ensure num_c/num_q are consistent
+            config['num_c'] = data_config.get('num_c', config.get('num_c'))
+            config['num_q'] = data_config.get('num_q', config.get('num_q'))
         
         # CoT 配置
         self.use_cot = config.get('use_cot', False)
