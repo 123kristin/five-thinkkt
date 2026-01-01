@@ -34,6 +34,8 @@ parser.add_argument("--adaptive_strategy", type=str, default='rule', choices=['r
 parser.add_argument("--mllm_name", type=str, default='/home3/zhiyu/code-5/CRKT/five-thinkkt/hf_models/Qwen/Qwen2-VL-3B-Instruct', help="MLLM模型路径")
 parser.add_argument("--cot_cache_dir", type=str, default='cot_cache', help="CoT缓存目录")
 
+parser.add_argument("--resume", action="store_true", help="Resume training from previous checkpoint")
+
 # GPU选择参数 - 新增
 parser.add_argument("--gpu_id", type=str, default="0",
                    help="指定使用的GPU ID，如'0','1','2'等")
