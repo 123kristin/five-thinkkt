@@ -350,7 +350,6 @@ class CoTGenerator(nn.Module):
         # 生成 CoT
         image = None  # Ensure initialization
         try:
-            print(f"[CoTGenerator] DEBUG: generate_cot processing qid={current_qid}, img_path={img_path}")
             messages_content = []
             
             # 尝试加载图片 (如果 img_path 存在且有效)

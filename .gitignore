@@ -222,3 +222,4 @@ scripts_training2testing/examples/cot_logs/
 scripts_training2testing/examples/bs_logs/
 saved_model/
 experiment_results_summary.csv
+scripts_training2testing/cot_cache
