@@ -125,6 +125,11 @@ def main(params):
             del model_config[remove_item]
     if model_name in ["saint","saint++", "sakt", "atdkt", "simplekt","stablekt", "bakt_time","folibikt"]:
         model_config["seq_len"] = seq_len
+    
+    # Inject fusion_mode from params if present
+    if "fusion_mode" in params:
+        model_config["fusion_mode"] = params["fusion_mode"]
+
     debug_print(text = "init_model",fuc_name="main")
     print(f"model_name:{model_name}")
     model = init_model(model_name, model_config, data_config[dataset_name], emb_type)

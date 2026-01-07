@@ -211,11 +211,13 @@ class JiTAdapter(nn.Module):
 
 
 class JiKTNet(nn.Module):
-    def __init__(self, config: dict, dataset_name=None, img_path_dict=None):
+    def __init__(self, config: dict, dataset_name=None, img_path_dict=None, fusion_mode='vq'):
         super(JiKTNet, self).__init__()
         self.model_name = 'jikt_net'
         self.dataset_name = dataset_name
         self.img_path_dict = img_path_dict or {}
+        self.fusion_mode = fusion_mode
+        print(f"[JiKTNet] Fusion Mode: {self.fusion_mode}")
         
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
@@ -264,17 +266,35 @@ class JiKTNet(nn.Module):
         )
         
         # --- 多模态融合模块 ---
-        # 1. JiT 适配器 (带缓存)
-        print(f"[JiKTNet] 初始化 JiTAdapter (数据集: {self.dataset_name})...")
-        self.jit_encoder = JiTAdapter(self.device, dataset_name=self.dataset_name)
-        
-        # 2. 视觉投影层 (768 -> dim_qc)
         jit_hidden_dim = 768 
-        self.visual_projector = nn.Sequential(
-            nn.Linear(jit_hidden_dim, self.dim_qc),
-            nn.ReLU(),
-            nn.Linear(self.dim_qc, self.dim_qc)
-        )
+        self.jit_encoder = None
+        self.visual_projector = None
+        self.fusion_gate = None
+        self.fusion_concat = None
+        
+        # Initialize components based on fusion mode
+        if self.fusion_mode != 'qid':
+            # 1. JiT 适配器 (带缓存) - Only loaded if not in 'qid' mode
+            print(f"[JiKTNet] 初始化 JiTAdapter (数据集: {self.dataset_name})...")
+            self.jit_encoder = JiTAdapter(self.device, dataset_name=self.dataset_name)
+            
+            # 2. 视觉投影层 (768 -> dim_qc) for vq, gf, concat
+            self.visual_projector = nn.Sequential(
+                nn.Linear(jit_hidden_dim, self.dim_qc),
+                nn.ReLU(),
+                nn.Linear(self.dim_qc, self.dim_qc)
+            )
+            
+            if self.fusion_mode == 'gf':
+                 # Gated parameter: W * [Q_id, Q_vis] -> 1 (sigmoid)
+                 self.fusion_gate = nn.Sequential(
+                     nn.Linear(self.dim_qc * 2, 1),
+                     nn.Sigmoid()
+                 )
+            
+            elif self.fusion_mode == 'concat':
+                 # Concat projection: Linear(2*dim, dim)
+                 self.fusion_concat = nn.Linear(self.dim_qc * 2, self.dim_qc)
 
     def _ensure_c_ids_on_device(self):
         """确保c_ids在正确的设备上"""
@@ -290,8 +310,9 @@ class JiKTNet(nn.Module):
         self.c_ids = torch.arange(self.num_c, device=device)
         
         # JiTAdapter 也需要 to
-        self.jit_encoder.device = device # Update internal device tracking
-        self.jit_encoder.jit_model.to(device)
+        if self.jit_encoder is not None:
+             self.jit_encoder.device = device # Update internal device tracking
+             self.jit_encoder.jit_model.to(device)
         
         return self
 
@@ -338,19 +359,37 @@ class JiKTNet(nn.Module):
         r = r.to(self.device)
         q_shift = q_shift.to(self.device)
 
+        # Baseline QID Embedding
         q_emb = self.QEmbs(q)  # [bz, num_interactions, dim_qc]
         
-        # --- 视觉特征融合 ---
-        # 使用 QID 序列查找图片并提取特征
-        # q: [bz, num_interactions]
-        # features: [bz, num_interactions, 768]
-        vis_feats = self.jit_encoder(q, self.img_path_dict)
+        # --- 多模态融合逻辑 ---
+        if self.fusion_mode == 'qid':
+            # Skip visual part entirely
+            pass
+        else:
+            # 使用 QID 序列查找图片并提取特征
+            vis_feats = self.jit_encoder(q, self.img_path_dict)
+            vis_emb = self.visual_projector(vis_feats) # [Bz, Seq, dim_qc]
             
-        # 投影及恢复形状 [Bz, Seq, dim_qc]
-        vis_emb = self.visual_projector(vis_feats)
+            if self.fusion_mode == 'vq':
+                # Additive Fusion: Q = Q + Vis
+                q_emb = q_emb + vis_emb
+                
+            elif self.fusion_mode == 'gf':
+                # Gated: Gate = Sigmoid(Linear(cat([Q, V])))
+                # Q = Q + Gate * Vis
+                combined = torch.cat([q_emb, vis_emb], dim=-1) # [Bz, Seq, 2*dim]
+                gate = self.fusion_gate(combined) # [Bz, Seq, 1]
+                q_emb = q_emb + gate * vis_emb
+                
+            elif self.fusion_mode == 'concat':
+                # Concat: Q = Linear(cat([Q, V]))
+                combined = torch.cat([q_emb, vis_emb], dim=-1)
+                q_emb = self.fusion_concat(combined)
             
-        # 加法融合: 增强 ID Embedding
-        q_emb = q_emb + vis_emb
+            else:
+                 # Fallback to vq
+                 q_emb = q_emb + vis_emb
 
         # [bz, num_interactions, num_c]
         c_ids = self.c_ids.unsqueeze(0).expand(bz, -1).unsqueeze(1).expand(-1, num_interactions, -1)
@@ -379,13 +418,14 @@ class JiKTNet(nn.Module):
 
 class JiKT(nn.Module):
     """
-    消融实验用，没有多头注意力的block 块，即没有建模q_kcs的权重以及
+    JiKT Wrapper for Training
     """
 
     def __init__(self, config, data_config=None):
         super(JiKT, self).__init__()
         self.model_name = 'jikt'
         self.emb_type = config.get('emb_type', 'qkcs')
+        self.fusion_mode = config.get('fusion_mode', 'vq') # Default to additive
         
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
@@ -405,9 +445,8 @@ class JiKT(nn.Module):
             self.device = torch.device("cpu")
             print(f"[JiKT] CUDA不可用，使用CPU")
         
-        # 构建图片路径映射
+        # 构建图片路径映射 (Only needed if not qid mode)
         self.dataset_name = config.get('dataset_name', 'DBE_KT22')
-        # 如果 data_config 有 dpath，从文件名推断 dataset_name (ThinkKT logic)
         if data_config:
              dpath = data_config.get('dpath', '')
              if 'XES3G5M' in dpath: self.dataset_name = 'XES3G5M'
@@ -415,14 +454,18 @@ class JiKT(nn.Module):
              elif 'NIPS_task34' in dpath: self.dataset_name = 'NIPS_task34'
         
         img_path_dict = {}
-        if data_config:
-            print(f"[JiKT] Building image path dict for {self.dataset_name}...")
-            img_path_dict = build_img_path_dict(self.dataset_name, data_config)
-            print(f"[JiKT] Loaded {len(img_path_dict)} images.")
+        # Only build dict if we are going to use visual features
+        if self.fusion_mode != 'qid':
+            if data_config:
+                print(f"[JiKT] Building image path dict for {self.dataset_name} (Mode: {self.fusion_mode})...")
+                img_path_dict = build_img_path_dict(self.dataset_name, data_config)
+                print(f"[JiKT] Loaded {len(img_path_dict)} images.")
+            else:
+                print(f"[JiKT] Warning: No data_config provided, image features will be zero.")
         else:
-            print(f"[JiKT] Warning: No data_config provided, image features will be zero.")
+            print(f"[JiKT] Mode is 'qid', skipping image path loading.")
 
-        self.model = JiKTNet(config, dataset_name=self.dataset_name, img_path_dict=img_path_dict)
+        self.model = JiKTNet(config, dataset_name=self.dataset_name, img_path_dict=img_path_dict, fusion_mode=self.fusion_mode)
 
     def train_one_step(self, data):
         # 无需手动传 img_seq，内部根据 qseqs 自动查找缓存

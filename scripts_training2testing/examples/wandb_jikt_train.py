@@ -22,6 +22,7 @@ parser.add_argument("--save_dir", type=str, default="saved_model")
 # model config
 parser.add_argument("--model_name", type=str, default="jikt")
 parser.add_argument("--emb_type", type=str, default='qkcs')
+parser.add_argument("--fusion_mode", type=str, default="vq", help="Fusion mode: qid, vq, gf, concat")
 
 parser.add_argument("--dropout", type=float, default=0.1)
 parser.add_argument("--dim_qc", type=int, default=200, help="dimension of q and c embedding")
