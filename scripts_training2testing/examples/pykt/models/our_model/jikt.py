@@ -60,7 +60,8 @@ class JiTAdapter(nn.Module):
         # 初始化 JiT-B/32 模型 (Patch Size=32, Resolutions=512)
         # 注意: 这里我们只初始化模型结构，实际应该加载预训练权重
         # 为了避免显存爆炸，我们冻结所有参数
-        self.jit_model = JiT_B_32(img_size=512, patch_size=32)
+        # JiT_B_32 already sets patch_size=32. Arg is input_size not img_size.
+        self.jit_model = JiT_B_32(input_size=512)
         
         # 冻结参数
         for param in self.jit_model.parameters():
