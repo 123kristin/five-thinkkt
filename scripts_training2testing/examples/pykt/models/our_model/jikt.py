@@ -8,8 +8,36 @@ import atexit
 from typing import Dict, Optional, List
 
 # 添加 JiT 代码路径
-# Assuming JiT is a sibling directory to five-thinkkt on the remote server
-sys.path.append("/home3/zhiyu/code-5/CRKT/JiT")
+# Try to locate JiT relative to this file or using hardcoded paths
+current_file_path = os.path.abspath(__file__)
+# Go up 6 levels from .../pykt/models/our_model/jikt.py to five-thinkkt root
+# pykt/models/our_model/jikt.py -> our_model -> models -> pykt -> examples -> scripts_training... -> five-thinkkt
+five_thinkkt_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file_path))))))
+crkt_root = os.path.dirname(five_thinkkt_root)
+
+possible_jit_paths = [
+    os.path.join(five_thinkkt_root, "JiT"), # First priority: inside five-thinkkt (user's new structure)
+    os.path.join(crkt_root, "JiT"),         # Sibling directory
+    os.path.join(five_thinkkt_root, "../JiT"),
+    "/home3/zhiyu/code-5/CRKT/five-thinkkt/JiT", # Hardcoded check
+    "/home3/zhiyu/code-5/CRKT/JiT",
+    "/home/zhiyu/other_code/JiT"
+]
+
+jit_path_found = None
+for p in possible_jit_paths:
+    if os.path.exists(os.path.join(p, "model_jit.py")):
+        jit_path_found = p
+        break
+
+if jit_path_found:
+    if jit_path_found not in sys.path:
+        sys.path.append(jit_path_found)
+    print(f"[JiKT] Successfully added JiT path: {jit_path_found}")
+else:
+    print(f"[JiKT] Warning: valid JiT path not found. Checked: {possible_jit_paths}")
+    # Add default just in case to avoid immediate crash if it's magically in path differently
+    sys.path.append("/home3/zhiyu/code-5/CRKT/JiT")
 from model_jit import JiT_B_32
 from torchvision import transforms
 from PIL import Image
