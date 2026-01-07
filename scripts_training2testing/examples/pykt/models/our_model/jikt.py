@@ -1,18 +1,195 @@
 import json
 import os
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sys
+import atexit
+from typing import Dict, Optional, List
+
+# 添加 JiT 代码路径
+# Assuming JiT is a sibling directory to five-thinkkt on the remote server
+sys.path.append("/home3/zhiyu/code-5/CRKT/JiT")
+from model_jit import JiT_B_32
+from torchvision import transforms
+from PIL import Image
+
+# Import helper from visual_language_encoder
+try:
+    from .visual_language_encoder import build_img_path_dict
+except ImportError:
+    # Fallback if relative import fails when running directly
+    from .visual_language_encoder import build_img_path_dict
+
+class JiTAdapter(nn.Module):
+    def __init__(self, device, dataset_name=None, cache_dir="features", use_cache=True):
+        super().__init__()
+        self.device = device
+        self.dataset_name = dataset_name
+        self.cache_dir = cache_dir
+        self.use_cache = use_cache
+        
+        # 初始化 JiT-B/32 模型 (Patch Size=32, Resolutions=512)
+        # 注意: 这里我们只初始化模型结构，实际应该加载预训练权重
+        # 为了避免显存爆炸，我们冻结所有参数
+        self.jit_model = JiT_B_32(img_size=512, patch_size=32)
+        
+        # 冻结参数
+        for param in self.jit_model.parameters():
+            param.requires_grad = False
+        
+        self.jit_model.eval() # 始终保持评估模式
+        self.jit_model.to(device)
+
+        # 预处理: 归一化 (ImageNet mean/std)
+        self.normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        
+        # Resize 对于非 512x512 的图片 (如 NIPS 的 640x480)
+        self.resize = transforms.Resize((512, 512))
+        
+        # 缓存系统
+        self.feature_cache = {}
+        if self.use_cache:
+            self._load_feature_cache()
+            atexit.register(self.save_feature_cache)
+
+    def _get_cache_path(self) -> str:
+        """获取特征缓存文件路径 (Distinct from Qwen cache)"""
+        if self.dataset_name:
+            cache_file = f"{self.dataset_name}_jit_features.pt"
+        else:
+            cache_file = "jit_features.pt"
+        return os.path.join(self.cache_dir, cache_file)
+
+    def _load_feature_cache(self):
+        """加载特征缓存"""
+        if not self.use_cache: return
+        
+        cache_path = self._get_cache_path()
+        if os.path.exists(cache_path):
+            try:
+                print(f"[JiTAdapter] 正在加载特征缓存: {cache_path}")
+                self.feature_cache = torch.load(cache_path, map_location='cpu')
+                print(f"[JiTAdapter] 已加载 {len(self.feature_cache)} 个题目特征")
+            except Exception as e:
+                print(f"[JiTAdapter] 警告: 加载缓存失败 {e}，将重新计算")
+                self.feature_cache = {}
+
+    def save_feature_cache(self):
+        """保存特征缓存"""
+        if not self.use_cache or not self.feature_cache: return
+        
+        cache_path = self._get_cache_path()
+        os.makedirs(os.path.dirname(cache_path) if os.path.dirname(cache_path) else '.', exist_ok=True)
+        try:
+            torch.save(self.feature_cache, cache_path)
+            print(f"[JiTAdapter] 已保存 {len(self.feature_cache)} 个题目特征到 {cache_path}")
+        except Exception as e:
+            print(f"[JiTAdapter] 警告: 保存缓存失败 {e}")
+
+    def preprocess(self, x):
+        """
+        x: [B, 3, H, W] tensor
+        """
+        if x.shape[-2:] != (512, 512):
+            x = self.resize(x)
+        x = self.normalize(x)
+        return x
+
+    def extract_feature_from_image(self, img_path):
+        """读取并处理单张图片"""
+        try:
+            image = Image.open(img_path).convert('RGB')
+            # Transform to tensor
+            x = transforms.ToTensor()(image).unsqueeze(0).to(self.device) # [1, 3, H, W]
+            
+            # Preprocess
+            x = self.preprocess(x)
+            
+            # JiT Forward (Frozen)
+            with torch.no_grad():
+                x_emb = self.jit_model.x_embedder(x)
+                x_emb += self.jit_model.pos_embed
+                
+                t = torch.zeros(x.shape[0], device=x.device)
+                y = torch.zeros(x.shape[0], device=x.device).long()
+                
+                t_emb = self.jit_model.t_embedder(t)
+                y_emb = self.jit_model.y_embedder(y)
+                c = t_emb + y_emb
+                
+                for block in self.jit_model.blocks:
+                    x_emb = block(x_emb, c, self.jit_model.feat_rope)
+                    
+                # Global Average Pooling
+                feature = x_emb.mean(dim=1).squeeze(0) # [C]
+                
+            return feature # On device
+            
+        except Exception as e:
+            print(f"[JiTAdapter] Error processing {img_path}: {e}")
+            return torch.zeros(768, device=self.device)
+
+    def forward(self, qids, img_path_dict):
+        """
+        Input: 
+            qids: [B, Seq] or [B*Seq] Tensor
+            img_path_dict: {qid: path}
+        Output:
+            features: [B, Seq, 768] or [B*Seq, 768]
+        """
+        original_shape = qids.shape
+        qids_flat = qids.view(-1).cpu().numpy()
+        
+        batch_features = []
+        
+        # 1. 查找缓存
+        # 优化: 预先收集所有 miss 的 qid
+        process_indices = []
+        process_paths = []
+        
+        for i, qid in enumerate(qids_flat):
+            if qid in self.feature_cache:
+                batch_features.append(self.feature_cache[qid])
+            else:
+                batch_features.append(None) # 占位
+                if qid in img_path_dict:
+                    process_indices.append(i)
+                    process_paths.append(img_path_dict[qid])
+        
+        # 2. 处理 Missing (逐个处理，为了简单和显存安全)
+        # 如果需要加速，可以 mini-batch 处理
+        for idx, path in zip(process_indices, process_paths):
+            feat = self.extract_feature_from_image(path)
+            batch_features[idx] = feat.cpu() # 存入缓存前转CPU
+            
+            # 更新缓存
+            qid = qids_flat[idx]
+            if self.use_cache:
+                self.feature_cache[qid] = feat.cpu()
+                
+        # 3. 填充剩余 None (qid 不在 dict 中的情况，如 padding 0)
+        # 默认 0 向量
+        zero_vec = torch.zeros(768)
+        for i in range(len(batch_features)):
+            if batch_features[i] is None:
+                batch_features[i] = zero_vec
+        
+        # 4. Stack and Move to Device
+        feature_tensor = torch.stack(batch_features).to(self.device)
+        
+        return feature_tensor.view(*original_shape, -1)
 
 
 class JiKTNet(nn.Module):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, dataset_name=None, img_path_dict=None):
         super(JiKTNet, self).__init__()
         self.model_name = 'jikt_net'
+        self.dataset_name = dataset_name
+        self.img_path_dict = img_path_dict or {}
+        
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
-            # 从环境变量获取指定的GPU ID
             current_gpu_id = os.environ.get('CURRENT_GPU_ID', '0')
             try:
                 gpu_id = int(current_gpu_id)
@@ -54,9 +231,20 @@ class JiKTNet(nn.Module):
 
         self.q_scores_extractor = nn.Sequential(
             nn.Dropout(self.dropout),
-            # nn.Linear(self.dim_knowledge, self.dim_knowledge),
-            # nn.ReLU(),
             nn.Linear(self.dim_knowledge, self.num_q)
+        )
+        
+        # --- 多模态融合模块 ---
+        # 1. JiT 适配器 (带缓存)
+        print(f"[JiKTNet] 初始化 JiTAdapter (数据集: {self.dataset_name})...")
+        self.jit_encoder = JiTAdapter(self.device, dataset_name=self.dataset_name)
+        
+        # 2. 视觉投影层 (768 -> dim_qc)
+        jit_hidden_dim = 768 
+        self.visual_projector = nn.Sequential(
+            nn.Linear(jit_hidden_dim, self.dim_qc),
+            nn.ReLU(),
+            nn.Linear(self.dim_qc, self.dim_qc)
         )
 
     def _ensure_c_ids_on_device(self):
@@ -72,9 +260,21 @@ class JiKTNet(nn.Module):
         # 重新创建c_ids在正确设备上
         self.c_ids = torch.arange(self.num_c, device=device)
         
+        # JiTAdapter 也需要 to
+        self.jit_encoder.device = device # Update internal device tracking
+        self.jit_encoder.jit_model.to(device)
+        
         return self
 
     def get_kc_avg_emb(self, c, pad_idx=-1):
+        if c.dim() == 2:
+            # Handle single-concept input: [bz, len]
+            mask = c != pad_idx
+            c_safe = c.masked_fill(~mask, 0)
+            embs = self.KCEmbs(c_safe) # [bz, len, emb_size]
+            embs = embs * mask.unsqueeze(-1)
+            return embs
+
         # 1. 掩码：True 表示有效索引
         mask = c != pad_idx  # [bz, len, max_concepts]
 
@@ -96,16 +296,7 @@ class JiKTNet(nn.Module):
 
     def forward(self, q, c, r, q_shift, return_all=False):
         """
-        :param q: (bz, interactions_seq_len - 1)
-            the first (interaction_seq_len - 1) q in an interaction sequence of a student
-        :param c: (bz, interactions_seq_len - 1, max_concepts)
-        :param r: (bz, interactions_seq_len - 1)
-            the first (interaction_seq_len - 1) responses in an interaction sequence of a student
-        :param q_shift: (bz, interactions_seq_len - 1)
-            the last (interaction_seq_len - 1) q  in an interaction sequence of a student
-
-        :return: (bz, interaction_seq_len - 1)
-            the predicted (interaction_seq_len - 1) responses
+        Modified forward to handle image loading internally via jit_encoder
         """
         bz, num_interactions = q.shape  # num_interactions = interactions_seq_len - 1
 
@@ -119,6 +310,19 @@ class JiKTNet(nn.Module):
         q_shift = q_shift.to(self.device)
 
         q_emb = self.QEmbs(q)  # [bz, num_interactions, dim_qc]
+        
+        # --- 视觉特征融合 ---
+        # 使用 QID 序列查找图片并提取特征
+        # q: [bz, num_interactions]
+        # features: [bz, num_interactions, 768]
+        vis_feats = self.jit_encoder(q, self.img_path_dict)
+            
+        # 投影及恢复形状 [Bz, Seq, dim_qc]
+        vis_emb = self.visual_projector(vis_feats)
+            
+        # 加法融合: 增强 ID Embedding
+        q_emb = q_emb + vis_emb
+
         # [bz, num_interactions, num_c]
         c_ids = self.c_ids.unsqueeze(0).expand(bz, -1).unsqueeze(1).expand(-1, num_interactions, -1)
         c_embs = self.KCEmbs(c_ids)  # (bz, num_interactions, num_c, dim_qc)
@@ -149,13 +353,13 @@ class JiKT(nn.Module):
     消融实验用，没有多头注意力的block 块，即没有建模q_kcs的权重以及
     """
 
-    def __init__(self, config):
+    def __init__(self, config, data_config=None):
         super(JiKT, self).__init__()
         self.model_name = 'jikt'
         self.emb_type = config.get('emb_type', 'qkcs')
+        
         # 改进设备选择逻辑，真正选择指定的GPU卡号
         if torch.cuda.is_available():
-            # 从环境变量获取指定的GPU ID
             current_gpu_id = os.environ.get('CURRENT_GPU_ID', '0')
             try:
                 gpu_id = int(current_gpu_id)
@@ -172,9 +376,27 @@ class JiKT(nn.Module):
             self.device = torch.device("cpu")
             print(f"[JiKT] CUDA不可用，使用CPU")
         
-        self.model = JiKTNet(config)
+        # 构建图片路径映射
+        self.dataset_name = config.get('dataset_name', 'DBE_KT22')
+        # 如果 data_config 有 dpath，从文件名推断 dataset_name (ThinkKT logic)
+        if data_config:
+             dpath = data_config.get('dpath', '')
+             if 'XES3G5M' in dpath: self.dataset_name = 'XES3G5M'
+             elif 'DBE_KT22' in dpath: self.dataset_name = 'DBE_KT22'
+             elif 'NIPS_task34' in dpath: self.dataset_name = 'NIPS_task34'
+        
+        img_path_dict = {}
+        if data_config:
+            print(f"[JiKT] Building image path dict for {self.dataset_name}...")
+            img_path_dict = build_img_path_dict(self.dataset_name, data_config)
+            print(f"[JiKT] Loaded {len(img_path_dict)} images.")
+        else:
+            print(f"[JiKT] Warning: No data_config provided, image features will be zero.")
+
+        self.model = JiKTNet(config, dataset_name=self.dataset_name, img_path_dict=img_path_dict)
 
     def train_one_step(self, data):
+        # 无需手动传 img_seq，内部根据 qseqs 自动查找缓存
         y = self.model(data['qseqs'], data['cseqs'], data['rseqs'], data['shft_qseqs'])
 
         sm = data['smasks'].to(self.device)
@@ -214,14 +436,3 @@ if __name__ == '__main__':
     }
     model = JiKT(config)
     print(model)
-    import sys
-
-    dir_current = os.path.dirname(__file__)
-    sys.path.append(dir_current)
-
-    bz, num_interactions = 2, 200
-    q = torch.randint(0, config['num_q'], (bz, num_interactions - 1))
-    r = torch.randint(0, 2, (bz, num_interactions - 1))
-    q_shift = torch.randint(0, config['num_q'], (bz, num_interactions - 1))
-    y = model.model(q, r, q_shift)
-    print(y.shape)

@@ -5,7 +5,7 @@ from datetime import datetime
 # 其余与torch无关的import保留在顶部
 from pykt.utils import debug_print,set_seed
 
-dir_path_of_configs = "/home3/zhiyu/code-4/kt_analysis_generation/my_configs"
+dir_path_of_configs = "/home3/zhiyu/code-5/CRKT/five-thinkkt/my_configs"
 
 def save_config(train_config, model_config, data_config, params, save_dir):
     d = {"train_config": train_config, 'model_config': model_config, "data_config": data_config, "params": params}
