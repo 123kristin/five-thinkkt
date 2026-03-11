@@ -36,7 +36,7 @@ def load_kc_vocab(dataset_name: str, data_config: dict) -> Dict[int, str]:
                 os.path.join(dpath, "KCs.csv"),
                 os.path.join(dpath, "../2_DBE_KT22_datafiles_100102_csv/KCs.csv"),
                 os.path.join(dpath, "../../2_DBE_KT22_datafiles_100102_csv/KCs.csv"),
-                "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/DBE_KT22/2_DBE_KT22_datafiles_100102_csv/KCs.csv"
+                "/mnt/data/kt-data/DBE_KT22/2_DBE_KT22_datafiles_100102_csv/KCs.csv"
             ]
             kcs_file = None
             for path in possible_paths:
@@ -74,8 +74,8 @@ def load_kc_vocab(dataset_name: str, data_config: dict) -> Dict[int, str]:
             possible_paths = [
                 os.path.join(dpath, "metadata", "subject_metadata.csv"),
                 os.path.join(dpath, "subject_metadata.csv"),
-                "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/Eedi/data/metadata/subject_metadata.csv",
-                "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/NIPS_task34/metadata/subject_metadata.csv"
+                "/mnt/data/kt-data/Eedi/data/metadata/subject_metadata.csv",
+                "/mnt/data/kt-data/NIPS_task34/metadata/subject_metadata.csv"
             ]
             subject_file = None
             for path in possible_paths:

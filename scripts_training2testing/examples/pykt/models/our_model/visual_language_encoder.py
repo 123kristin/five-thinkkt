@@ -748,7 +748,7 @@ def build_img_path_dict(dataset_name: str, data_config: dict) -> Dict[int, str]:
         possible_paths = [
             os.path.join(dpath, "../2_DBE_KT22_datafiles_100102_csv/q_imgs"),
             os.path.join(dpath, "../../2_DBE_KT22_datafiles_100102_csv/q_imgs"),
-            "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/DBE_KT22/2_DBE_KT22_datafiles_100102_csv/q_imgs"
+            "/mnt/data/kt-data/DBE_KT22/2_DBE_KT22_datafiles_100102_csv/q_imgs"
         ]
         
         q_imgs_dir = None
@@ -772,7 +772,7 @@ def build_img_path_dict(dataset_name: str, data_config: dict) -> Dict[int, str]:
         dpath = data_config.get("dpath", "")
         possible_paths = [
             os.path.join(dpath, "metadata/q_imgs"),
-            "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/XES3G5M/metadata/q_imgs"
+            "/mnt/data/kt-data/XES3G5M/metadata/q_imgs"
         ]
         
         q_imgs_dir = None
@@ -797,8 +797,8 @@ def build_img_path_dict(dataset_name: str, data_config: dict) -> Dict[int, str]:
         dpath = data_config.get("dpath", "")
         possible_paths = [
             os.path.join(dpath, "images"),
-            "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/Eedi/data/images",
-            "/home3/zhiyu/code-5/CRKT/five-thinkkt/data/NIPS_task34/images",
+            "/mnt/data/kt-data/Eedi/data/images",
+            "/mnt/data/kt-data/NIPS_task34/images",
             "/home3/zhiyu/code-5/CRKT/data/NIPS_task34/images"
         ]
         
